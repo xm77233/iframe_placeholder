@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>游戏iframe嵌入示例 - 修复音频自动播放问题</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        h1, h2 {
+            color: #333;
+        }
+        .game-container {
+            margin-bottom: 30px;
+            background-color: white;
+            border-radius: 8px;
+            padding: 15px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            position: relative;
+        }
+        .game-iframe {
+            width: 100%;
+            height: 600px;
+            border: none;
+        }
+        .game-info {
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #f9f9f9;
+            border-radius: 4px;
+        }
+        #load-games {
+            padding: 10px 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        #load-games:hover {
+            background-color: #45a049;
+        }
+        #file-input {
+            display: none;
+        }
+        #error-message {
+            color: red;
+            margin-top: 10px;
+            font-weight: bold;
+        }
+        .instructions {
+            background-color: #fff3cd;
+            border: 1px solid #ffeeba;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+        }
+        /* 游戏覆盖层样式 */
+        .game-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 600px;
+            background-color: rgba(0, 0, 0, 0.7);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            z-index: 10;
+            color: white;
+            text-align: center;
+        }
+        .play-button {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            background-color: rgba(76, 175, 80, 0.9);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+        }
+        .play-button svg {
+            width: 40px;
+            height: 40px;
+            fill: white;
+        }
+        .start-text {
+            font-size: 20px;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+        .audio-note {
+            font-size: 14px;
+            opacity: 0.8;
+        }
+    </style>
+</head>
+<body>
+    <h1>itch.io游戏iframe嵌入示例 - 修复音频自动播放问题</h1>
+    
+    <div class="instructions">
+        <h3>使用说明：</h3>
+        <ol>
+            <li>点击下方"选择JSON文件"按钮，选择生成的 <code>results/game_iframes.json</code> 文件</li>
+            <li>加载游戏后，点击每个游戏上的"点击开始游戏"按钮来加载并播放游戏</li>
+            <li>这样可以避免浏览器的"NotAllowedError: play() failed because the user didn't interact with the document first"错误</li>
+        </ol>
+    </div>
+    
+    <button id="load-games">选择JSON文件</button>
+    <input type="file" id="file-input" accept=".json">
+    <div id="error-message"></div>
+    
+    <div id="games-container"></div>
+    
+    <script>
+        // 获取元素
+        const loadGamesBtn = document.getElementById('load-games');
+        const fileInput = document.getElementById('file-input');
+        const errorMessage = document.getElementById('error-message');
+        const gamesContainer = document.getElementById('games-container');
+        
+        // 当点击按钮时触发文件选择
+        loadGamesBtn.addEventListener('click', function() {
+            fileInput.click();
+        });
+        
+        // 当选择文件后读取JSON数据
+        fileInput.addEventListener('change', function(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            errorMessage.textContent = '';
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const games = JSON.parse(e.target.result);
+                    displayGames(games);
+                } catch (error) {
+                    errorMessage.textContent = '无法解析JSON文件: ' + error.message;
+                }
+            };
+            reader.onerror = function() {
+                errorMessage.textContent = '读取文件时发生错误';
+            };
+            reader.readAsText(file);
+        });
+        
+        // 显示游戏
+        function displayGames(games) {
+            gamesContainer.innerHTML = ''; // 清空容器
+            
+            if (!games || games.length === 0) {
+                gamesContainer.innerHTML = '<p>没有找到游戏数据。请先运行Python脚本抓取游戏数据。</p>';
+                return;
+            }
+            
+            // 为每个游戏创建一个容器和iframe
+            games.forEach((game, index) => {
+                const gameDiv = document.createElement('div');
+                gameDiv.className = 'game-container';
+                gameDiv.id = `game-${index}`;
+                
+                // 添加游戏标题
+                const title = document.createElement('h2');
+                title.textContent = game.title || `游戏 ${index + 1}`;
+                gameDiv.appendChild(title);
+                
+                // 创建iframe元素，但初始设置为隐藏
+                const iframe = document.createElement('iframe');
+                iframe.className = 'game-iframe';
+                iframe.id = `iframe-${index}`;
+                iframe.style.display = 'none'; // 初始隐藏
+                iframe.setAttribute('allowfullscreen', '');
+                iframe.setAttribute('allow', 'autoplay; fullscreen; geolocation; microphone; camera; midi; monetization; xr-spatial-tracking; gamepad; gyroscope; accelerometer; xr; cross-origin-isolated');
+                gameDiv.appendChild(iframe);
+                
+                // 创建游戏覆盖层，用于用户交互
+                const overlay = document.createElement('div');
+                overlay.className = 'game-overlay';
+                overlay.id = `overlay-${index}`;
+                overlay.innerHTML = `
+                    <div class="play-button">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                            <path d="M8 5v14l11-7z"/>
+                        </svg>
+                    </div>
+                    <div class="start-text">点击开始游戏</div>
+                    <div class="audio-note">点击后游戏音频将正常工作</div>
+                `;
+                
+                // 点击覆盖层时加载游戏
+                overlay.addEventListener('click', function() {
+                    // 设置iframe的src属性（延迟加载）
+                    const iframeEl = document.getElementById(`iframe-${index}`);
+                    iframeEl.src = game.iframe_src;
+                    iframeEl.style.display = 'block';
+                    
+                    // 隐藏覆盖层
+                    overlay.style.display = 'none';
+                });
+                
+                gameDiv.appendChild(overlay);
+                
+                // 添加游戏信息
+                const info = document.createElement('div');
+                info.className = 'game-info';
+                info.innerHTML = `
+                    <p><strong>游戏标题:</strong> ${game.title || '未知'}</p>
+                    <p><strong>游戏链接:</strong> <a href="${game.game_url}" target="_blank">${game.game_url}</a></p>
+                    <p><strong>iframe源:</strong> ${game.iframe_src}</p>
+                `;
+                gameDiv.appendChild(info);
+                
+                // 将游戏容器添加到主容器中
+                gamesContainer.appendChild(gameDiv);
+            });
+        }
+    </script>
+</body>
+</html> 
