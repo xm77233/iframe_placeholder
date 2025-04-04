@@ -139,24 +139,81 @@ def get_iframe_src(game_url):
         with open(f"{debug_dir}/{game_id}.html", 'w', encoding='utf-8') as f:
             f.write(html_content)
         
-        # 查找iframe_placeholder中的data-iframe属性
-        iframe_placeholder = re.search(r'<div class="iframe_placeholder"\s+data-iframe="([^"]*)"', html_content)
-        if iframe_placeholder:
-            # 获取data-iframe属性值并解码HTML实体
-            iframe_data_str = iframe_placeholder.group(1)
-            iframe_data_str = html.unescape(iframe_data_str)
-            
-            # 从iframe标签中提取src属性
-            iframe_src_match = re.search(r'src="([^"]*)"', iframe_data_str)
-            if iframe_src_match:
-                iframe_src = iframe_src_match.group(1)
-                logger.info(f"从data-iframe属性中找到iframe源: {iframe_src}")
-                return iframe_src
-            else:
-                logger.warning(f"在data-iframe中未找到src属性")
+        # 寻找iframe源的综合方法
+        iframe_src = None
         
-        logger.warning(f"未能找到iframe源")
-        return None
+        # 情况1: 查找html_embed元素中的iframe标签的src属性
+        html_embed_match = re.search(r'<div[^>]*id="html_embed_\d+"[^>]*>(.*?)</div>', html_content, re.DOTALL)
+        if html_embed_match:
+            html_embed_content = html_embed_match.group(1)
+            
+            # 情况1.1: 直接从iframe标签中提取src属性
+            iframe_tag = re.search(r'<iframe[^>]*src="([^"]*)"[^>]*>', html_embed_content)
+            if iframe_tag:
+                iframe_src = iframe_tag.group(1)
+                logger.info(f"从html_embed的iframe标签中找到iframe源: {iframe_src}")
+            
+            # 情况1.2: 从data-iframe属性中提取src
+            if not iframe_src:
+                data_iframe = re.search(r'data-iframe="([^"]*)"', html_embed_content)
+                if data_iframe:
+                    # 获取data-iframe属性值并解码HTML实体
+                    iframe_data_str = data_iframe.group(1)
+                    iframe_data_str = html.unescape(iframe_data_str)
+                    
+                    # 从iframe标签中提取src属性
+                    iframe_src_match = re.search(r'src="([^"]*)"', iframe_data_str)
+                    if iframe_src_match:
+                        iframe_src = iframe_src_match.group(1)
+                        logger.info(f"从html_embed的data-iframe属性中找到iframe源: {iframe_src}")
+        
+        # 情况2: 如果在html_embed中找不到，则查找iframe_placeholder中的data-iframe属性
+        if not iframe_src:
+            iframe_placeholder = re.search(r'<div[^>]*class="iframe_placeholder"[^>]*data-iframe="([^"]*)"', html_content, re.DOTALL)
+            if iframe_placeholder:
+                # 获取data-iframe属性值并解码HTML实体
+                iframe_data_str = iframe_placeholder.group(1)
+                iframe_data_str = html.unescape(iframe_data_str)
+                
+                # 从iframe标签中提取src属性
+                iframe_src_match = re.search(r'src="([^"]*)"', iframe_data_str)
+                if iframe_src_match:
+                    iframe_src = iframe_src_match.group(1)
+                    logger.info(f"从iframe_placeholder的data-iframe属性中找到iframe源: {iframe_src}")
+        
+        # 情况3: 查找load_iframe_btn的父元素中的data-iframe属性
+        if not iframe_src:
+            load_iframe_btn = re.search(r'<div[^>]*data-iframe="([^"]*)"[^>]*>\s*<button[^>]*class="[^"]*load_iframe_btn[^"]*"', html_content, re.DOTALL)
+            if load_iframe_btn:
+                # 获取data-iframe属性值并解码HTML实体
+                iframe_data_str = load_iframe_btn.group(1)
+                iframe_data_str = html.unescape(iframe_data_str)
+                
+                # 从iframe标签中提取src属性
+                iframe_src_match = re.search(r'src="([^"]*)"', iframe_data_str)
+                if iframe_src_match:
+                    iframe_src = iframe_src_match.group(1)
+                    logger.info(f"从load_iframe_btn父元素的data-iframe属性中找到iframe源: {iframe_src}")
+        
+        # 情况4: 查找game_frame元素内的data-iframe属性
+        if not iframe_src:
+            game_frame = re.search(r'<div[^>]*class="game_frame[^"]*"[^>]*>\s*<div[^>]*data-iframe="([^"]*)"', html_content, re.DOTALL)
+            if game_frame:
+                # 获取data-iframe属性值并解码HTML实体
+                iframe_data_str = game_frame.group(1)
+                iframe_data_str = html.unescape(iframe_data_str)
+                
+                # 从iframe标签中提取src属性
+                iframe_src_match = re.search(r'src="([^"]*)"', iframe_data_str)
+                if iframe_src_match:
+                    iframe_src = iframe_src_match.group(1)
+                    logger.info(f"从game_frame内元素的data-iframe属性中找到iframe源: {iframe_src}")
+        
+        if iframe_src:
+            return iframe_src
+        else:
+            logger.warning(f"未能找到iframe源")
+            return None
     
     except Exception as e:
         logger.error(f"获取游戏页面时出错: {e}")
