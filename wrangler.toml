@@ -1,0 +1,9 @@
+name = "iframe-scraper"
+main = "cloudflare_worker.js"
+compatibility_date = "2023-11-09"
+
+[triggers]
+crons = []
+
+[vars]
+MAX_GAMES = "8" 

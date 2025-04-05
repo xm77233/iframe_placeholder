@@ -66,6 +66,9 @@
                 Extract iframe sources from free web games on itch.io for embedding in your website or application.
                 Simply configure your extraction parameters and download the results.
             </p>
+            <div class="mt-3 bg-apple-yellow-100 border-l-4 border-apple-yellow-400 p-3 text-sm text-apple-gray-800 rounded">
+                <p><strong>注意:</strong> 在线版本使用预设的真实游戏数据，提供15个热门游戏的iframe源。如需爬取其他游戏，请在本地运行工具。</p>
+            </div>
         </header>
         
         <main>
@@ -218,11 +221,14 @@
                     </div>
                     
                     <!-- Download Button (Initially Hidden) -->
-                    <div id="download-section" class="hidden mt-6 flex justify-center">
+                    <div id="download-section" class="hidden mt-6 flex justify-center flex-col items-center">
                         <a id="download-btn" href="#" 
-                            class="bg-apple-green hover:bg-opacity-90 text-white font-medium rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-apple-green focus:ring-opacity-50 transition-colors">
+                            class="bg-apple-green hover:bg-opacity-90 text-white font-medium rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-apple-green focus:ring-opacity-50 transition-colors mb-2">
                             Download Results
                         </a>
+                        <p class="text-xs text-apple-gray-500 max-w-md text-center">
+                            在线版本提供的是预先收集的真实游戏iframe数据，适用于大多数嵌入场景。这些数据已经过验证可以正常工作。
+                        </p>
                     </div>
                     
                     <div class="mt-6 flex justify-center">
@@ -321,7 +327,8 @@
                             <h3 class="text-lg font-medium text-apple-gray-900">How long does processing take?</h3>
                             <p class="mt-1 text-apple-gray-600">
                                 Processing time depends on the number of games you're extracting. Typically, it takes about
-                                1-2 minutes per 10 games due to request delays to respect itch.io's servers.
+                                1-2 minutes per 10 games due to request delays to respect itch.io's servers. The online version
+                                uses pre-collected data for instant results.
                             </p>
                         </div>
                         
@@ -347,6 +354,15 @@
                             <p class="mt-1 text-apple-gray-600">
                                 This tool is for educational purposes and personal use. Always respect itch.io's terms of service
                                 and game developers' rights when using the extracted iframes.
+                            </p>
+                        </div>
+                        
+                        <div>
+                            <h3 class="text-lg font-medium text-apple-gray-900">What's the difference between online and local versions?</h3>
+                            <p class="mt-1 text-apple-gray-600">
+                                The online version provides pre-collected data from 15 popular games to give you immediate results.
+                                The local version allows you to crawl any game from itch.io by running the Python script on your computer,
+                                but requires more setup and processing time.
                             </p>
                         </div>
                     </div>

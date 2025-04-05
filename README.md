@@ -17,15 +17,27 @@
 
 ### 本地启动在线工具网站
 
+如需本地部署，请按照以下步骤操作：
+
+1. 克隆仓库或下载源代码
 ```bash
-# 安装Flask依赖
+git clone https://github.com/xm77233/iframe_placeholder.git
+cd iframe_placeholder
+```
+
+2. 安装Python依赖
+```bash
 pip install flask
+```
 
-# 启动服务器
+3. 启动在线工具网站服务器
+```bash
 python server.py
+```
 
-# 然后在浏览器访问
-# http://127.0.0.1:5000
+4. 在浏览器中访问
+```
+http://127.0.0.1:5000
 ```
 
 ## 项目介绍
@@ -139,4 +151,13 @@ git clone https://github.com/用户名/仓库名.git
 
 # 进入项目目录
 cd 仓库名
-``` 
+```
+
+## 在线工具网站
+
+您可以直接访问我们部署在Vercel上的在线工具：[iframe采集工具](https://iframe-placeholder.vercel.app/)
+
+通过在线工具，您可以：
+1. 一键采集最新的itch.io免费网页游戏iframe源地址
+2. 即时预览并体验游戏
+3. 导出JSON结果文件 
