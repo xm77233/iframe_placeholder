@@ -115,6 +115,7 @@ class FastItchIoScraper:
         self.processed_count = 0
         self.successful_count = 0
         self.start_time = datetime.now()
+        self.debug_save_html = True  # 保存HTML用于调试
     
     def get_random_user_agent(self):
         """随机获取一个User-Agent"""
@@ -131,10 +132,41 @@ class FastItchIoScraper:
             str: 页面HTML内容
         """
         try:
-            headers = {'User-Agent': self.get_random_user_agent()}
+            headers = {
+                'User-Agent': self.get_random_user_agent(),
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+                'Cache-Control': 'max-age=0',
+                'TE': 'Trailers'
+            }
+            
+            print(f"正在获取URL: {url}")
+            print(f"使用User-Agent: {headers['User-Agent']}")
+            
             req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=5) as response:
-                return response.read().decode('utf-8')
+            with urllib.request.urlopen(req, timeout=10) as response:
+                html_content = response.read().decode('utf-8')
+                
+                # 保存HTML用于调试
+                if self.debug_save_html:
+                    try:
+                        if not os.path.exists(DEBUG_HTML_DIR):
+                            os.makedirs(DEBUG_HTML_DIR)
+                        
+                        # 从URL中提取游戏名称用作文件名
+                        game_name = url.split('/')[-1]
+                        debug_file = os.path.join(DEBUG_HTML_DIR, f"{game_name}.html")
+                        
+                        with open(debug_file, 'w', encoding='utf-8') as f:
+                            f.write(html_content)
+                            
+                        print(f"已保存HTML到 {debug_file}")
+                    except Exception as e:
+                        print(f"保存HTML失败: {e}")
+                
+                return html_content
         except Exception as e:
             print(f"获取URL {url} 失败: {e}")
             return ""
@@ -154,30 +186,57 @@ class FastItchIoScraper:
         games = []
         page_size = 36  # itch.io每页显示36个游戏
         
+        print(f"------------------------------")
+        print(f"开始获取游戏列表 - 最大数量: {max_to_fetch}, 偏移量: {offset}")
+        
         url = f"https://itch.io/games/free/platform-web?offset={offset}"
-        print(f"获取游戏列表页面: {url}")
+        print(f"请求游戏列表页面: {url}")
         
         try:
             html_content = self.fetch_url(url)
             if not html_content:
+                print("无法获取游戏列表HTML内容")
                 return []
             
-            # 提取游戏标题和链接
-            pattern = r'<a class="game_link" href="(https://[^"]+\.itch\.io/[^"]+)">\s*<div class="game_cell_data">\s*<div class="game_title">(.*?)</div>'
+            print(f"成功获取游戏列表HTML内容，长度: {len(html_content)} 字符")
+            
+            # 保存列表页HTML用于调试
+            if self.debug_save_html:
+                try:
+                    debug_file = os.path.join(DEBUG_HTML_DIR, f"game_list_offset_{offset}.html")
+                    with open(debug_file, 'w', encoding='utf-8') as f:
+                        f.write(html_content)
+                    print(f"已保存游戏列表HTML到 {debug_file}")
+                except Exception as e:
+                    print(f"保存游戏列表HTML失败: {e}")
+            
+            # 提取游戏标题和链接 - 使用更可靠的正则表达式
+            pattern = r'<a\s+class="game_link"\s+href="(https://[^"]+\.itch\.io/[^"]+)"[^>]*>[\s\S]*?<div\s+class="game_title">([\s\S]*?)</div>'
             matches = re.findall(pattern, html_content, re.DOTALL)
             
+            print(f"找到 {len(matches)} 个游戏匹配项")
+            
             for game_url, game_title in matches[:max_to_fetch]:
-                games.append((game_url, html.unescape(game_title.strip())))
+                clean_title = html.unescape(game_title.strip())
+                # 清理标题中的HTML标签
+                clean_title = re.sub(r'<[^>]+>', '', clean_title)
+                
+                games.append((game_url, clean_title))
                 self.processed_count += 1
+                
+                print(f"添加游戏: {clean_title} ({game_url})")
                 
                 if len(games) >= max_to_fetch:
                     break
                     
-            print(f"找到 {len(games)} 个游戏")
+            print(f"成功提取 {len(games)} 个游戏信息")
             
         except Exception as e:
             print(f"获取游戏列表失败: {e}")
+            import traceback
+            print(f"详细错误: {traceback.format_exc()}")
         
+        print(f"------------------------------")
         return games
     
     def get_iframe_src(self, game_page_html, game_url):
@@ -194,38 +253,125 @@ class FastItchIoScraper:
         iframe_src = None
         extraction_method = ""
         
+        print(f"------------------------------")
+        print(f"开始提取iframe源 - {game_url}")
+        
         # 方法1: 检查html_embed区域中的iframe标签
         if not iframe_src:
             try:
-                match = re.search(r'<div id="html_embed_content"[^>]*>.*?<iframe[^>]*src="([^"]+)"', game_page_html, re.DOTALL)
+                print("尝试方法1: html_embed > iframe")
+                match = re.search(r'<div[^>]*id=["\'](html_embed_content|html_embed)["\']\s*[^>]*>[\s\S]*?<iframe[^>]*src=["\'](.*?)["\']', game_page_html, re.DOTALL)
                 if match:
-                    iframe_src = html.unescape(match.group(1))
+                    iframe_src = html.unescape(match.group(2))
                     extraction_method = "html_embed_iframe"
-                    print(f"使用iframe标签提取成功: {game_url}")
+                    print(f"方法1成功: {iframe_src}")
+                else:
+                    print("方法1未找到匹配")
             except Exception as e:
-                print(f"iframe标签提取失败: {e}")
+                print(f"方法1出错: {e}")
         
         # 方法2: 检查html_embed区域中的data-iframe属性
         if not iframe_src:
             try:
-                match = re.search(r'<div id="html_embed_content"[^>]*data-iframe="([^"]+)"', game_page_html)
+                print("尝试方法2: html_embed > data-iframe")
+                match = re.search(r'<div[^>]*id=["\'](html_embed_content|html_embed)["\']\s*[^>]*data-iframe=["\']([^"\']+)["\']', game_page_html)
                 if match:
-                    iframe_src = html.unescape(match.group(1))
+                    iframe_src = html.unescape(match.group(2))
                     extraction_method = "html_embed_data_iframe"
-                    print(f"使用data-iframe属性提取成功: {game_url}")
+                    print(f"方法2成功: {iframe_src}")
+                else:
+                    print("方法2未找到匹配")
             except Exception as e:
-                print(f"data-iframe属性提取失败: {e}")
+                print(f"方法2出错: {e}")
         
         # 方法3: 检查iframe_placeholder元素
         if not iframe_src:
             try:
-                match = re.search(r'<div class="iframe_placeholder"[^>]*data-iframe="([^"]+)"', game_page_html)
+                print("尝试方法3: iframe_placeholder")
+                match = re.search(r'<div[^>]*class=["\'](iframe_placeholder)["\']\s*[^>]*data-iframe=["\']([^"\']+)["\']', game_page_html)
+                if match:
+                    iframe_src = html.unescape(match.group(2))
+                    extraction_method = "iframe_placeholder"
+                    print(f"方法3成功: {iframe_src}")
+                else:
+                    print("方法3未找到匹配")
+            except Exception as e:
+                print(f"方法3出错: {e}")
+        
+        # 方法4: 查找包含id="game_drop"的区域
+        if not iframe_src:
+            try:
+                print("尝试方法4: game_drop区域")
+                match = re.search(r'<div[^>]*id=["\'](game_drop)["\']\s*[^>]*>[\s\S]*?data-iframe=["\'](.*?)["\']', game_page_html, re.DOTALL)
+                if match:
+                    iframe_src = html.unescape(match.group(2))
+                    extraction_method = "game_drop"
+                    print(f"方法4成功: {iframe_src}")
+                else:
+                    print("方法4未找到匹配")
+            except Exception as e:
+                print(f"方法4出错: {e}")
+        
+        # 方法5: 直接搜索data-iframe属性，不限制元素类型
+        if not iframe_src:
+            try:
+                print("尝试方法5: 全局data-iframe搜索")
+                match = re.search(r'data-iframe=["\']([^"\']+)["\']', game_page_html)
                 if match:
                     iframe_src = html.unescape(match.group(1))
-                    extraction_method = "iframe_placeholder"
-                    print(f"使用iframe_placeholder提取成功: {game_url}")
+                    extraction_method = "global_data_iframe"
+                    print(f"方法5成功: {iframe_src}")
+                else:
+                    print("方法5未找到匹配")
             except Exception as e:
-                print(f"iframe_placeholder提取失败: {e}")
+                print(f"方法5出错: {e}")
+        
+        # 方法6: 搜索嵌入式iframe
+        if not iframe_src:
+            try:
+                print("尝试方法6: 嵌入式iframe")
+                match = re.search(r'<iframe[^>]*src=["\']([^"\']+)["\'][^>]*class=["\'](game_frame)["\']', game_page_html)
+                if match:
+                    iframe_src = html.unescape(match.group(1))
+                    extraction_method = "embedded_iframe"
+                    print(f"方法6成功: {iframe_src}")
+                else:
+                    print("方法6未找到匹配")
+            except Exception as e:
+                print(f"方法6出错: {e}")
+        
+        # 尝试清理和验证提取的URL
+        if iframe_src:
+            # 移除可能的换行符和多余空格
+            iframe_src = iframe_src.strip().replace('\n', '').replace('\r', '')
+            
+            # 如果iframe源不是URL格式，但包含完整的iframe标签，则尝试从中提取src
+            if '<iframe' in iframe_src and 'src=' in iframe_src:
+                try:
+                    print("从完整iframe标签中提取src")
+                    tag_match = re.search(r'src=["\']([^"\']+)["\']', iframe_src)
+                    if tag_match:
+                        iframe_src = html.unescape(tag_match.group(1))
+                        print(f"从标签中提取成功: {iframe_src}")
+                except Exception as e:
+                    print(f"从标签提取失败: {e}")
+
+            # 检查提取的URL是否有效
+            is_valid = iframe_src.startswith(('http://', 'https://', '//', '/')) and len(iframe_src) > 10
+            print(f"URL验证: {'有效' if is_valid else '无效'} - {iframe_src}")
+            
+            if not is_valid:
+                iframe_src = None
+                extraction_method = ""
+                print("提取的URL无效，设置为None")
+        
+        if iframe_src:
+            print(f"成功提取iframe源: {iframe_src}")
+            print(f"提取方法: {extraction_method}")
+        else:
+            print(f"所有方法均未找到iframe源")
+            
+        print(f"------------------------------")
         
         return iframe_src, extraction_method
     
@@ -240,69 +386,133 @@ class FastItchIoScraper:
         Returns:
             dict: 游戏信息字典
         """
-        print(f"处理游戏: {game_title} ({game_url})")
+        print(f"开始处理游戏: {game_title} ({game_url})")
         
         try:
+            # 尝试两次获取页面内容，第二次使用不同的UA
             game_page_html = self.fetch_url(game_url)
+            
+            if not game_page_html or len(game_page_html) < 1000:  # HTML太短可能是错误
+                print(f"首次获取页面失败或内容过短 ({len(game_page_html) if game_page_html else 0} 字符)，尝试第二次获取...")
+                time.sleep(1)  # 延迟1秒再试
+                game_page_html = self.fetch_url(game_url)
+            
             if not game_page_html:
                 print(f"无法获取游戏页面: {game_url}")
                 return None
                 
+            print(f"成功获取游戏页面，HTML长度: {len(game_page_html)} 字符")
+            
             iframe_src, extraction_method = self.get_iframe_src(game_page_html, game_url)
             
             if iframe_src:
                 self.successful_count += 1
                 print(f"成功找到iframe源: {iframe_src}")
                 
-                return {
+                # 获取额外的游戏信息
+                game_info = {
                     "title": game_title,
                     "url": game_url,
                     "iframe_src": iframe_src,
-                    "extracted_method": extraction_method
+                    "extracted_method": extraction_method,
+                    "timestamp": datetime.now().isoformat()
                 }
+                
+                # 尝试提取游戏简介
+                try:
+                    description_match = re.search(r'<div[^>]*class=["\']game_description["\'][^>]*>([\s\S]*?)</div>', game_page_html)
+                    if description_match:
+                        description = description_match.group(1).strip()
+                        # 清理HTML标签
+                        description = re.sub(r'<[^>]+>', '', description)
+                        # 实体解码
+                        description = html.unescape(description)
+                        game_info["description"] = description
+                except Exception as e:
+                    print(f"提取游戏简介失败: {e}")
+                
+                # 尝试提取缩略图URL
+                try:
+                    thumbnail_match = re.search(r'<img[^>]*class=["\']game_thumb["\'][^>]*src=["\']([^"\']+)["\']', game_page_html)
+                    if thumbnail_match:
+                        thumbnail_url = thumbnail_match.group(1)
+                        game_info["thumbnail_url"] = thumbnail_url
+                except Exception as e:
+                    print(f"提取缩略图URL失败: {e}")
+                
+                return game_info
             else:
                 print(f"未找到iframe源: {game_url}")
                 return None
                 
         except Exception as e:
             print(f"处理游戏 {game_title} 失败: {e}")
+            import traceback
+            print(f"详细错误: {traceback.format_exc()}")
             return None
     
     def scrape(self):
         """执行爬取过程"""
-        print(f"开始爬取，最大游戏数: {self.max_games}, 起始偏移: {self.start_offset}")
-        self.start_time = datetime.now()
+        print(f"==========================================")
+        print(f"开始爬取 - 最大游戏数: {self.max_games}, 起始偏移: {self.start_offset}")
+        print(f"开始时间: {self.start_time.isoformat()}")
+        print(f"==========================================")
         
         # 获取游戏页面URL
         game_urls = self.get_game_page_urls()
         
+        if not game_urls:
+            print("未找到任何游戏，爬取结束")
+            return [], {
+                "total_processed": 0,
+                "successful_extractions": 0,
+                "elapsed_seconds": 0,
+                "timestamp": datetime.now().isoformat(),
+                "error": "No games found in the list page"
+            }
+        
         # 处理每个游戏
         for i, (game_url, game_title) in enumerate(game_urls):
+            print(f"\n处理游戏 {i+1}/{len(game_urls)}: {game_title}")
+            
             # 添加延迟
             if i > 0 and self.delay > 0:
+                print(f"等待 {self.delay} 秒...")
                 time.sleep(self.delay)
                 
             # 检查是否超时
             elapsed = (datetime.now() - self.start_time).total_seconds()
-            if elapsed > 8:  # 设置8秒的安全阈值，确保在Vercel 10秒限制前返回
-                print(f"接近时间限制，已处理 {i} 个游戏，提前结束")
+            if elapsed > 55:  # 设置55秒的安全阈值，确保在Vercel 60秒限制前返回
+                print(f"接近时间限制 ({elapsed:.2f}秒)，已处理 {i} 个游戏，提前结束")
                 break
                 
             # 处理游戏
             result = self.process_game(game_url, game_title)
             if result:
                 self.results.append(result)
+                print(f"成功添加结果 - {game_title}")
+            else:
+                print(f"未能获取结果 - {game_title}")
         
         # 生成统计信息
-        elapsed_time = (datetime.now() - self.start_time).total_seconds()
+        end_time = datetime.now()
+        elapsed_time = (end_time - self.start_time).total_seconds()
         stats = {
             "total_processed": self.processed_count,
             "successful_extractions": self.successful_count,
             "elapsed_seconds": elapsed_time,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": end_time.isoformat(),
+            "start_time": self.start_time.isoformat(),
+            "end_time": end_time.isoformat()
         }
         
-        print(f"爬取完成，处理了 {self.processed_count} 个游戏，成功提取 {self.successful_count} 个iframe源，耗时 {elapsed_time:.2f} 秒")
+        print(f"==========================================")
+        print(f"爬取完成")
+        print(f"处理了 {self.processed_count} 个游戏")
+        print(f"成功提取 {self.successful_count} 个iframe源")
+        print(f"耗时 {elapsed_time:.2f} 秒")
+        print(f"成功率: {(self.successful_count / max(1, self.processed_count) * 100):.2f}%")
+        print(f"==========================================")
         
         return self.results, stats
 
@@ -399,7 +609,7 @@ def run_extraction_job(job_id, params):
             'error': str(e)
         })
 
-# 修改模拟数据处理函数，添加真实爬取功能
+# 修改模拟数据处理函数，优化真实爬取功能
 def mock_process_job(job_id, params):
     """
     A mock job processing function for demonstration purposes
@@ -420,19 +630,33 @@ def mock_process_job(job_id, params):
         # Create a sample result
         result_file = os.path.join(RESULTS_DIR, f"job_{job_id}.json")
         
-        max_games = min(params.get('max_games', 10), 15)  # 限制为最多15个游戏
+        # 限制最大游戏数量，避免超时
+        max_games = min(params.get('max_games', 10), 20)  # 限制为最多20个游戏
         offset = params.get('offset', 0)
+        delay = params.get('delay', 0.2)  # 使用请求的延迟值，但默认值较小，加速爬取
         
-        # 使用环境变量决定是否使用真实爬虫
-        use_real_scraper = os.environ.get('USE_REAL_SCRAPER', 'false').lower() == 'true'
+        # 总是尝试使用真实爬虫，除非环境变量明确禁用
+        use_real_scraper = os.environ.get('USE_REAL_SCRAPER', 'true').lower() != 'false'
         print(f"是否使用真实爬虫: {use_real_scraper}")
         
-        # 如果启用真实爬虫，尝试爬取真实数据
+        # 使用真实爬虫进行爬取
         if use_real_scraper:
+            print("=== 使用真实爬虫进行爬取 ===")
+            print(f"最大游戏数: {max_games}, 偏移量: {offset}, 延迟: {delay}秒")
+            
             try:
-                print("使用真实爬虫进行爬取")
-                scraper = FastItchIoScraper(max_games=max_games, start_offset=offset, delay=0.2)
+                # 创建爬虫实例
+                scraper = FastItchIoScraper(max_games=max_games, start_offset=offset, delay=delay)
+                
+                # 执行爬取
                 results, stats = scraper.scrape()
+                
+                # 更新状态并输出统计信息
+                print(f"爬取完成: 处理了 {stats['total_processed']} 个游戏，成功提取 {stats['successful_extractions']} 个iframe源")
+                update_job(job_id, {
+                    'processed': stats['total_processed'],
+                    'successful': stats['successful_extractions']
+                })
                 
                 # 如果爬取成功但结果为空，回退到预设数据
                 if not results:
@@ -442,11 +666,15 @@ def mock_process_job(job_id, params):
                     print(f"真实爬取成功，获取到 {len(results)} 个结果")
                     sample_results = results
             except Exception as e:
-                print(f"真实爬取失败: {e}，回退到预设数据")
+                print(f"真实爬取失败: {e}")
+                import traceback
+                print(f"详细错误: {traceback.format_exc()}")
+                print("回退到预设数据")
                 use_real_scraper = False
         
         # 如果不使用真实爬虫或爬取失败，使用预设数据
         if not use_real_scraper:
+            print("=== 使用预设数据 ===")
             # 使用预先收集的真实iframe数据
             real_game_data = [
                 {
@@ -555,22 +783,39 @@ def mock_process_job(job_id, params):
                         "extracted_method": "mock_data"
                     })
         
-        # Save the sample results
-        with open(result_file, 'w', encoding='utf-8') as f:
-            json.dump(sample_results, f, indent=2)
+        # 添加元数据到结果中
+        result_with_metadata = {
+            "metadata": {
+                "job_id": job_id,
+                "timestamp": datetime.now().isoformat(),
+                "params": params,
+                "source": "real_scraper" if use_real_scraper else "preset_data",
+                "count": len(sample_results)
+            },
+            "results": sample_results
+        }
         
-        # Update the job status
+        # 保存结果
+        with open(result_file, 'w', encoding='utf-8') as f:
+            json.dump(result_with_metadata, f, indent=2, ensure_ascii=False)
+        
+        print(f"结果已保存到: {result_file}")
+        
+        # 更新任务状态
         update_job(job_id, {
             'status': 'completed',
             'completed_at': datetime.now().isoformat(),
             'result_count': len(sample_results),
             'result_file': result_file,
-            'processed': len(sample_results),
-            'successful': len(sample_results),
-            'found': len(sample_results)
+            'processed': len(sample_results) if not use_real_scraper else stats['total_processed'],
+            'successful': len(sample_results) if not use_real_scraper else stats['successful_extractions'],
+            'found': len(sample_results) if not use_real_scraper else stats['total_processed'],
+            'source': "real_scraper" if use_real_scraper else "preset_data"
         })
     except Exception as e:
         print(f"Error in mock processing: {e}")
+        import traceback
+        print(f"详细错误: {traceback.format_exc()}")
         update_job(job_id, {
             'status': 'failed',
             'error': str(e)
@@ -716,7 +961,7 @@ def job_status(job_id):
             'message': f'Server error: {str(e)}'
         }), 500
 
-# 添加新的下载API端点
+# 修改下载API端点，支持更灵活的结果格式
 @app.route('/api/download/<job_id>')
 def download_results(job_id):
     """Download job results"""
@@ -740,6 +985,40 @@ def download_results(job_id):
                 'message': 'Result file not found'
             }), 404
         
+        # 读取结果文件，检查格式
+        with open(result_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        # 检查是否已经包含元数据结构
+        if isinstance(data, dict) and 'results' in data and 'metadata' in data:
+            # 已经是新格式，直接使用
+            formatted_results = data
+        else:
+            # 旧格式，添加元数据结构
+            formatted_results = {
+                "metadata": {
+                    "job_id": job_id,
+                    "timestamp": jobs[job_id].get('completed_at', datetime.now().isoformat()),
+                    "params": jobs[job_id].get('params', {}),
+                    "source": jobs[job_id].get('source', 'unknown'),
+                    "count": len(data)
+                },
+                "results": data
+            }
+        
+        # 保存回文件
+        with open(result_file, 'w', encoding='utf-8') as f:
+            json.dump(formatted_results, f, indent=2, ensure_ascii=False)
+        
+        # 输出简单的结果摘要
+        result_summary = {
+            "job_id": job_id,
+            "count": len(formatted_results["results"]),
+            "completed_at": jobs[job_id].get('completed_at'),
+            "source": formatted_results["metadata"]["source"]
+        }
+        print(f"下载结果: {result_summary}")
+        
         return send_file(
             result_file,
             mimetype='application/json',
@@ -748,6 +1027,8 @@ def download_results(job_id):
         )
     except Exception as e:
         print(f"Error in download endpoint: {str(e)}")
+        import traceback
+        print(f"详细错误: {traceback.format_exc()}")
         return jsonify({
             'status': 'error',
             'message': f'Server error: {str(e)}'
