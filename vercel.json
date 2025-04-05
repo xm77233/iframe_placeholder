@@ -8,11 +8,16 @@
     ],
     "routes": [
         {
+            "src": "/api/(.*)",
+            "dest": "/server.py"
+        },
+        {
             "src": "/(.*)",
             "dest": "/server.py"
         }
     ],
     "env": {
-        "VERCEL": "true"
+        "VERCEL": "true",
+        "PYTHONUNBUFFERED": "1"
     }
 } 

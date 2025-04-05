@@ -23,9 +23,19 @@ import uuid
 # Vercel requires us to create our app at the global scope
 app = Flask(__name__, static_url_path='')
 
-# Jobs storage - for Vercel, we need to use a file-based storage since memory won't persist
-# between serverless function invocations
-JOBS_DATA_DIR = 'jobs'
+# File paths - for Vercel we need to use writable directories
+if 'VERCEL' in os.environ:
+    # On Vercel, use the tmp directory which is writable
+    JOBS_DATA_DIR = '/tmp/jobs'
+    RESULTS_DIR = '/tmp/results'
+    LOGS_DIR = '/tmp/logs'
+    DEBUG_HTML_DIR = '/tmp/debug_html'
+else:
+    # Local development
+    JOBS_DATA_DIR = 'jobs'
+    RESULTS_DIR = 'results'
+    LOGS_DIR = 'logs'
+    DEBUG_HTML_DIR = 'debug_html'
 
 # Job storage
 jobs = {}
@@ -45,19 +55,24 @@ def load_jobs():
 
 # Save job to file
 def save_job(job_id):
-    if not os.path.exists(JOBS_DATA_DIR):
-        os.makedirs(JOBS_DATA_DIR)
     try:
-        with open(os.path.join(JOBS_DATA_DIR, f"{job_id}.json"), 'w', encoding='utf-8') as f:
+        if not os.path.exists(JOBS_DATA_DIR):
+            os.makedirs(JOBS_DATA_DIR)
+        
+        job_file = os.path.join(JOBS_DATA_DIR, f"{job_id}.json")
+        with open(job_file, 'w', encoding='utf-8') as f:
             json.dump(jobs[job_id], f)
     except Exception as e:
         print(f"Error saving job {job_id}: {e}")
 
 def setup_result_directories():
     """Create necessary directories if they don't exist"""
-    for directory in ['results', 'logs', 'debug_html', 'jobs']:
-        if not os.path.exists(directory):
-            os.makedirs(directory)
+    for directory in [RESULTS_DIR, LOGS_DIR, DEBUG_HTML_DIR, JOBS_DATA_DIR]:
+        try:
+            if not os.path.exists(directory):
+                os.makedirs(directory)
+        except Exception as e:
+            print(f"Warning: Could not create directory {directory}: {e}")
 
 # Add a job update function
 def update_job(job_id, updates):
@@ -173,38 +188,45 @@ def mock_process_job(job_id, params):
     update_job(job_id, {'status': 'processing'})
     
     # Create a results directory if it doesn't exist
-    if not os.path.exists('results'):
-        os.makedirs('results')
-    
-    # Create a sample result
-    result_file = f"results/job_{job_id}.json"
-    sample_results = []
-    
-    # Create sample data based on the requested number of games
-    max_games = min(params.get('max_games', 10), 20)  # Limit to 20 for the mock version
-    
-    for i in range(max_games):
-        sample_results.append({
-            "title": f"Sample Game {i+1}",
-            "url": f"https://example.itch.io/sample-game-{i+1}",
-            "iframe_src": f"https://itch.io/embed-upload/1234567?color=333333&amp;dark=true",
-            "extracted_method": "mock_data"
+    try:
+        if not os.path.exists(RESULTS_DIR):
+            os.makedirs(RESULTS_DIR)
+        
+        # Create a sample result
+        result_file = os.path.join(RESULTS_DIR, f"job_{job_id}.json")
+        sample_results = []
+        
+        # Create sample data based on the requested number of games
+        max_games = min(params.get('max_games', 10), 20)  # Limit to 20 for the mock version
+        
+        for i in range(max_games):
+            sample_results.append({
+                "title": f"Sample Game {i+1}",
+                "url": f"https://example.itch.io/sample-game-{i+1}",
+                "iframe_src": f"https://itch.io/embed-upload/1234567?color=333333&amp;dark=true",
+                "extracted_method": "mock_data"
+            })
+        
+        # Save the sample results
+        with open(result_file, 'w', encoding='utf-8') as f:
+            json.dump(sample_results, f, indent=2)
+        
+        # Update the job status
+        update_job(job_id, {
+            'status': 'completed',
+            'completed_at': datetime.now().isoformat(),
+            'result_count': len(sample_results),
+            'result_file': result_file,
+            'processed': max_games,
+            'successful': max_games,
+            'found': max_games
         })
-    
-    # Save the sample results
-    with open(result_file, 'w', encoding='utf-8') as f:
-        json.dump(sample_results, f, indent=2)
-    
-    # Update the job status
-    update_job(job_id, {
-        'status': 'completed',
-        'completed_at': datetime.now().isoformat(),
-        'result_count': len(sample_results),
-        'result_file': result_file,
-        'processed': max_games,
-        'successful': max_games,
-        'found': max_games
-    })
+    except Exception as e:
+        print(f"Error in mock processing: {e}")
+        update_job(job_id, {
+            'status': 'failed',
+            'error': str(e)
+        })
 
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
@@ -217,68 +239,110 @@ def catch_all(path):
 @app.route('/api/extract', methods=['POST'])
 def extract():
     """Handle extraction requests"""
-    # Get request data
-    data = request.json
-    
-    # Email is now optional
-    
-    # Generate job ID
-    job_id = str(uuid.uuid4())
-    
-    # Create job record
-    jobs[job_id] = {
-        'id': job_id,
-        'email': data.get('email', ''),  # Email is now optional
-        'params': {
-            'max_games': data.get('max_games', 10),
-            'offset': data.get('offset', 0),
-            'delay': data.get('delay', 2),
-            'categories': data.get('categories', []),
-            'include_info': data.get('include_info', [])
-        },
-        'status': 'queued',
-        'created_at': datetime.now().isoformat(),
-        'processed': 0,
-        'successful': 0,
-        'found': 0
-    }
-    
-    # Save job to file
-    save_job(job_id)
-    
-    # Check if we're running on Vercel or locally
-    if 'VERCEL' in os.environ:
-        # On Vercel, use mock processing since we can't run background threads
-        mock_process_job(job_id, jobs[job_id]['params'])
-    else:
-        # Start extraction process in a new thread for local development
-        thread = threading.Thread(
-            target=run_extraction_job,
-            args=(job_id, jobs[job_id]['params'])
-        )
-        thread.daemon = True
-        thread.start()
-    
-    # Return job ID to client
-    return jsonify({
-        'status': 'success',
-        'message': 'Extraction job submitted successfully',
-        'job_id': job_id
-    })
+    try:
+        # Get request data
+        data = request.json
+        print(f"Received request data: {data}")
+        
+        if data is None:
+            return jsonify({
+                'status': 'error',
+                'message': 'Invalid JSON data'
+            }), 400
+        
+        # Email is now optional
+        
+        # Generate job ID
+        job_id = str(uuid.uuid4())
+        print(f"Generated job ID: {job_id}")
+        
+        # Process numeric parameters safely
+        try:
+            max_games = int(data.get('max_games', 10))
+        except (ValueError, TypeError):
+            max_games = 10
+            
+        try:
+            offset = int(data.get('offset', 0))
+        except (ValueError, TypeError):
+            offset = 0
+            
+        try:
+            delay = float(data.get('delay', 2))
+        except (ValueError, TypeError):
+            delay = 2
+        
+        # Create job record
+        jobs[job_id] = {
+            'id': job_id,
+            'email': data.get('email', ''),  # Email is now optional
+            'params': {
+                'max_games': max_games,
+                'offset': offset,
+                'delay': delay,
+                'categories': data.get('categories', []),
+                'include_info': data.get('include_info', [])
+            },
+            'status': 'queued',
+            'created_at': datetime.now().isoformat(),
+            'processed': 0,
+            'successful': 0,
+            'found': 0
+        }
+        
+        # Save job to file
+        save_job(job_id)
+        print(f"Saved job {job_id} to file")
+        
+        # Check if we're running on Vercel or locally
+        in_vercel = 'VERCEL' in os.environ
+        print(f"Running in Vercel environment: {in_vercel}")
+        
+        if in_vercel:
+            # On Vercel, use mock processing since we can't run background threads
+            print(f"Using mock processing for job {job_id}")
+            mock_process_job(job_id, jobs[job_id]['params'])
+        else:
+            # Start extraction process in a new thread for local development
+            print(f"Starting background thread for job {job_id}")
+            thread = threading.Thread(
+                target=run_extraction_job,
+                args=(job_id, jobs[job_id]['params'])
+            )
+            thread.daemon = True
+            thread.start()
+        
+        # Return job ID to client
+        return jsonify({
+            'status': 'success',
+            'message': 'Extraction job submitted successfully',
+            'job_id': job_id
+        })
+    except Exception as e:
+        import traceback
+        err_trace = traceback.format_exc()
+        print(f"Error in extract endpoint: {str(e)}")
+        print(f"Traceback: {err_trace}")
+        return jsonify({
+            'status': 'error',
+            'message': f'Server error: {str(e)}'
+        }), 500
 
 @app.route('/api/status/<job_id>')
 def job_status(job_id):
     """Get job status"""
-    if job_id not in jobs:
-        return jsonify({
-            'status': 'error',
-            'message': 'Job not found'
-        }), 404
-    
-    # Return job info
-    return jsonify({
-        'status': 'success',
-        'job': {
+    try:
+        print(f"Status request for job: {job_id}")
+        print(f"Available jobs: {list(jobs.keys())}")
+        
+        if job_id not in jobs:
+            return jsonify({
+                'status': 'error',
+                'message': 'Job not found'
+            }), 404
+        
+        # Return job info
+        job_info = {
             'id': jobs[job_id]['id'],
             'status': jobs[job_id]['status'],
             'created_at': jobs[job_id]['created_at'],
@@ -288,37 +352,58 @@ def job_status(job_id):
             'completed_at': jobs[job_id].get('completed_at'),
             'result_count': jobs[job_id].get('result_count')
         }
-    })
+        print(f"Returning job info: {job_info}")
+        
+        return jsonify({
+            'status': 'success',
+            'job': job_info
+        })
+    except Exception as e:
+        import traceback
+        err_trace = traceback.format_exc()
+        print(f"Error in status endpoint: {str(e)}")
+        print(f"Traceback: {err_trace}")
+        return jsonify({
+            'status': 'error',
+            'message': f'Server error: {str(e)}'
+        }), 500
 
 # 添加新的下载API端点
 @app.route('/api/download/<job_id>')
 def download_results(job_id):
     """Download job results"""
-    if job_id not in jobs:
+    try:
+        if job_id not in jobs:
+            return jsonify({
+                'status': 'error',
+                'message': 'Job not found'
+            }), 404
+        
+        if jobs[job_id]['status'] != 'completed':
+            return jsonify({
+                'status': 'error',
+                'message': 'Job is not completed yet'
+            }), 400
+        
+        result_file = jobs[job_id].get('result_file')
+        if not result_file or not os.path.exists(result_file):
+            return jsonify({
+                'status': 'error',
+                'message': 'Result file not found'
+            }), 404
+        
+        return send_file(
+            result_file,
+            mimetype='application/json',
+            as_attachment=True,
+            download_name=f'iframe_results_{job_id}.json'
+        )
+    except Exception as e:
+        print(f"Error in download endpoint: {str(e)}")
         return jsonify({
             'status': 'error',
-            'message': 'Job not found'
-        }), 404
-    
-    if jobs[job_id]['status'] != 'completed':
-        return jsonify({
-            'status': 'error',
-            'message': 'Job is not completed yet'
-        }), 400
-    
-    result_file = jobs[job_id].get('result_file')
-    if not result_file or not os.path.exists(result_file):
-        return jsonify({
-            'status': 'error',
-            'message': 'Result file not found'
-        }), 404
-    
-    return send_file(
-        result_file,
-        mimetype='application/json',
-        as_attachment=True,
-        download_name=f'iframe_results_{job_id}.json'
-    )
+            'message': f'Server error: {str(e)}'
+        }), 500
 
 # Add a healthcheck endpoint for Vercel
 @app.route('/api/healthcheck')

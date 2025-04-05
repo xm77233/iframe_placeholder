@@ -64,7 +64,7 @@
             <h1 class="text-3xl md:text-4xl font-bold mb-3">itch.io Game Iframe Extractor</h1>
             <p class="text-apple-gray-600 max-w-2xl mx-auto">
                 Extract iframe sources from free web games on itch.io for embedding in your website or application.
-                Simply configure your extraction parameters and receive results via email.
+                Simply configure your extraction parameters and download the results.
             </p>
         </header>
         
@@ -397,7 +397,15 @@
             for (const [key, value] of formData.entries()) {
                 // Skip checkboxes - we'll handle them separately
                 if (key !== 'categories' && key !== 'include_info') {
-                    data[key] = value;
+                    if (key === 'max_games' || key === 'offset') {
+                        // Convert numeric fields to integers
+                        data[key] = parseInt(value) || 0;
+                    } else if (key === 'delay') {
+                        // Convert delay to float
+                        data[key] = parseFloat(value) || 2.0;
+                    } else {
+                        data[key] = value;
+                    }
                 }
             }
             
@@ -406,7 +414,10 @@
             data.include_info = formData.getAll('include_info');
             
             // Update status while processing
-            document.getElementById('status-message').textContent = 'Processing your request...';
+            document.getElementById('status-message').textContent = 
+                'Your extraction job has been queued and is being processed...';
+            
+            console.log('Submitting data:', data);
             
             // Send request to backend
             fetch('/api/extract', {
@@ -431,7 +442,7 @@
                     pollJobStatus(result.job_id);
                     
                     document.getElementById('status-message').textContent = 
-                        'Your extraction job has been queued. We\'ll email you the results when complete.';
+                        'Your extraction job has been queued and is being processed...';
                 } else {
                     throw new Error(result.message || 'Unknown error');
                 }
@@ -447,6 +458,8 @@
         function pollJobStatus(jobId) {
             if (!jobId) return;
             
+            console.log('Starting to poll for job status:', jobId);
+            
             const statusInterval = setInterval(() => {
                 fetch(`/api/status/${jobId}`)
                     .then(response => {
@@ -456,6 +469,8 @@
                         return response.json();
                     })
                     .then(result => {
+                        console.log('Job status result:', result);
+                        
                         if (result.status === 'success') {
                             const job = result.job;
                             
