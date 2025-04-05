@@ -78,12 +78,12 @@
                         <!-- Email Input -->
                         <div>
                             <label for="email" class="block text-sm font-medium text-apple-gray-700 mb-1">
-                                Email Address <span class="text-apple-red">*</span>
+                                Email Address
                             </label>
-                            <input type="email" id="email" name="email" required
+                            <input type="email" id="email" name="email"
                                 class="w-full bg-apple-gray-100 border border-apple-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-apple-blue focus:border-transparent"
-                                placeholder="Your email to receive results">
-                            <p class="mt-1 text-xs text-apple-gray-500">We'll send the extraction results to this email address</p>
+                                placeholder="Your email (optional)">
+                            <p class="mt-1 text-xs text-apple-gray-500">Optional: You can download results directly from the browser</p>
                         </div>
                         
                         <!-- Game Count & Options -->
@@ -212,9 +212,17 @@
                                 Your extraction job is being processed...
                             </p>
                             <p class="mt-2 text-sm text-apple-gray-500">
-                                We'll send the results to your email when complete.
+                                When complete, you can download the results directly
                             </p>
                         </div>
+                    </div>
+                    
+                    <!-- Download Button (Initially Hidden) -->
+                    <div id="download-section" class="hidden mt-6 flex justify-center">
+                        <a id="download-btn" href="#" 
+                            class="bg-apple-green hover:bg-opacity-90 text-white font-medium rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-apple-green focus:ring-opacity-50 transition-colors">
+                            Download Results
+                        </a>
                     </div>
                     
                     <div class="mt-6 flex justify-center">
@@ -457,13 +465,21 @@
                                     `Processing in progress: ${job.processed} games processed, ${job.successful} iframe sources found.`;
                             } else if (job.status === 'completed') {
                                 document.getElementById('status-message').textContent = 
-                                    `Extraction completed! ${job.result_count} iframe sources have been sent to your email.`;
+                                    `Extraction completed! ${job.result_count} iframe sources extracted.`;
+                                
+                                // Show download button
+                                const downloadSection = document.getElementById('download-section');
+                                downloadSection.classList.remove('hidden');
+                                
+                                // Set download link
+                                const downloadBtn = document.getElementById('download-btn');
+                                downloadBtn.href = `/api/download/${jobId}`;
                                 
                                 // Stop polling once completed
                                 clearInterval(statusInterval);
                             } else if (job.status === 'failed') {
                                 document.getElementById('status-message').textContent = 
-                                    'Extraction failed. Please check your email for details or try again.';
+                                    'Extraction failed. Please try again with different parameters.';
                                 
                                 // Stop polling once failed
                                 clearInterval(statusInterval);
@@ -491,6 +507,9 @@
             // Hide status section and show form
             statusSection.classList.add('hidden');
             extractionForm.parentElement.parentElement.classList.remove('hidden');
+            
+            // Hide download button
+            document.getElementById('download-section').classList.add('hidden');
             
             // Reset form
             extractionForm.reset();

@@ -3,10 +3,10 @@
 
 """
 A simple Flask server for the itch.io Game Iframe Extractor
-Handles extraction requests and sends results via email
+Handles extraction requests and allows downloading results
 """
 
-from flask import Flask, request, jsonify, send_from_directory, render_template
+from flask import Flask, request, jsonify, send_from_directory, render_template, send_file
 import os
 import sys
 import json
@@ -20,23 +20,51 @@ from email.mime.application import MIMEApplication
 from datetime import datetime
 import uuid
 
+# Vercel requires us to create our app at the global scope
 app = Flask(__name__, static_url_path='')
 
-# Configuration
-EMAIL_SENDER = "noreply@iframe-extractor.example.com"  # Replace with your email
-SMTP_SERVER = "localhost"  # Replace with your SMTP server
-SMTP_PORT = 25  # Replace with your SMTP port
-SMTP_USERNAME = None  # Set if required
-SMTP_PASSWORD = None  # Set if required
+# Jobs storage - for Vercel, we need to use a file-based storage since memory won't persist
+# between serverless function invocations
+JOBS_DATA_DIR = 'jobs'
 
 # Job storage
 jobs = {}
+
+# Load jobs from files
+def load_jobs():
+    global jobs
+    if os.path.exists(JOBS_DATA_DIR):
+        for filename in os.listdir(JOBS_DATA_DIR):
+            if filename.endswith('.json'):
+                job_id = filename.split('.')[0]
+                try:
+                    with open(os.path.join(JOBS_DATA_DIR, filename), 'r', encoding='utf-8') as f:
+                        jobs[job_id] = json.load(f)
+                except Exception as e:
+                    print(f"Error loading job {job_id}: {e}")
+
+# Save job to file
+def save_job(job_id):
+    if not os.path.exists(JOBS_DATA_DIR):
+        os.makedirs(JOBS_DATA_DIR)
+    try:
+        with open(os.path.join(JOBS_DATA_DIR, f"{job_id}.json"), 'w', encoding='utf-8') as f:
+            json.dump(jobs[job_id], f)
+    except Exception as e:
+        print(f"Error saving job {job_id}: {e}")
 
 def setup_result_directories():
     """Create necessary directories if they don't exist"""
     for directory in ['results', 'logs', 'debug_html', 'jobs']:
         if not os.path.exists(directory):
             os.makedirs(directory)
+
+# Add a job update function
+def update_job(job_id, updates):
+    if job_id in jobs:
+        for key, value in updates.items():
+            jobs[job_id][key] = value
+        save_job(job_id)
 
 def run_extraction_job(job_id, params):
     """
@@ -47,7 +75,7 @@ def run_extraction_job(job_id, params):
         params: Job parameters
     """
     # Update job status
-    jobs[job_id]['status'] = 'processing'
+    update_job(job_id, {'status': 'processing'})
     
     try:
         # Prepare command line arguments
@@ -87,17 +115,17 @@ def run_extraction_job(job_id, params):
                 if "找到 " in line and " 个游戏" in line:
                     try:
                         games_found = int(line.split("找到 ")[1].split(" 个游戏")[0])
-                        jobs[job_id]['found'] = games_found
+                        update_job(job_id, {'found': games_found})
                     except:
                         pass
                 
                 if "成功找到iframe源" in line:
-                    jobs[job_id]['successful'] = jobs[job_id].get('successful', 0) + 1
+                    update_job(job_id, {'successful': jobs[job_id].get('successful', 0) + 1})
                 
                 if "已处理 " in line and " 个游戏" in line:
                     try:
                         processed = int(line.split("已处理 ")[1].split(" 个游戏")[0])
-                        jobs[job_id]['processed'] = processed
+                        update_job(job_id, {'processed': processed})
                     except:
                         pass
         
@@ -111,138 +139,80 @@ def run_extraction_job(job_id, params):
                 results = json.load(f)
                 
             # Update job info
-            jobs[job_id]['status'] = 'completed'
-            jobs[job_id]['completed_at'] = datetime.now().isoformat()
-            jobs[job_id]['result_count'] = len(results)
-            
-            # Send results via email
-            send_results_email(jobs[job_id]['email'], job_id, output_file, len(results))
+            update_job(job_id, {
+                'status': 'completed',
+                'completed_at': datetime.now().isoformat(),
+                'result_count': len(results),
+                'result_file': output_file
+            })
         else:
             # Something went wrong
-            jobs[job_id]['status'] = 'failed'
-            jobs[job_id]['error'] = 'No results were generated'
-            
-            # Send failure notification
-            send_failure_email(jobs[job_id]['email'], job_id)
+            update_job(job_id, {
+                'status': 'failed',
+                'error': 'No results were generated'
+            })
     
     except Exception as e:
         # Handle exceptions
-        jobs[job_id]['status'] = 'failed'
-        jobs[job_id]['error'] = str(e)
-        
-        # Send failure notification
-        send_failure_email(jobs[job_id]['email'], job_id)
+        update_job(job_id, {
+            'status': 'failed',
+            'error': str(e)
+        })
 
-def send_results_email(recipient, job_id, results_file, result_count):
+# Add a mock processing mode for Vercel
+def mock_process_job(job_id, params):
     """
-    Send extraction results via email
+    A mock job processing function for demonstration purposes
+    This is useful for Vercel deployment where background processing isn't available
     
     Args:
-        recipient: Email recipient
-        job_id: Job identifier
-        results_file: Path to results file
-        result_count: Number of results
+        job_id: Job ID
+        params: Processing parameters
     """
-    try:
-        # Create message
-        msg = MIMEMultipart()
-        msg['From'] = EMAIL_SENDER
-        msg['To'] = recipient
-        msg['Subject'] = f"Your itch.io Iframe Extraction Results (Job {job_id})"
-        
-        # Email body
-        body = f"""
-        Hello,
-        
-        Your itch.io iframe extraction job has been completed successfully.
-        
-        Job Summary:
-        - Job ID: {job_id}
-        - Completed: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-        - Results: {result_count} game iframe sources extracted
-        
-        The results are attached as a JSON file. You can use these iframe sources to embed games in your website or application.
-        
-        For help with using these results, please refer to our documentation.
-        
-        Thank you for using our service!
-        
-        Best regards,
-        itch.io Game Iframe Extractor Team
-        """
-        
-        msg.attach(MIMEText(body, 'plain'))
-        
-        # Attach results file
-        with open(results_file, 'rb') as f:
-            attachment = MIMEApplication(f.read(), _subtype='json')
-            attachment.add_header('Content-Disposition', 'attachment', filename=f'iframe_results_{job_id}.json')
-            msg.attach(attachment)
-        
-        # Send email
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-            if SMTP_USERNAME and SMTP_PASSWORD:
-                server.login(SMTP_USERNAME, SMTP_PASSWORD)
-            server.send_message(msg)
-            
-    except Exception as e:
-        print(f"Error sending results email: {e}")
-        # Update job status
-        jobs[job_id]['email_status'] = 'failed'
-        jobs[job_id]['email_error'] = str(e)
-
-def send_failure_email(recipient, job_id):
-    """
-    Send failure notification via email
+    # Update job status
+    update_job(job_id, {'status': 'processing'})
     
-    Args:
-        recipient: Email recipient
-        job_id: Job identifier
-    """
-    try:
-        # Create message
-        msg = MIMEMultipart()
-        msg['From'] = EMAIL_SENDER
-        msg['To'] = recipient
-        msg['Subject'] = f"itch.io Iframe Extraction Failed (Job {job_id})"
-        
-        # Email body
-        body = f"""
-        Hello,
-        
-        We're sorry, but your itch.io iframe extraction job has failed.
-        
-        Job Summary:
-        - Job ID: {job_id}
-        - Error: {jobs.get(job_id, {}).get('error', 'Unknown error')}
-        
-        You can try submitting a new job with different parameters. If the problem persists, please contact our support.
-        
-        Thank you for using our service!
-        
-        Best regards,
-        itch.io Game Iframe Extractor Team
-        """
-        
-        msg.attach(MIMEText(body, 'plain'))
-        
-        # Send email
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-            if SMTP_USERNAME and SMTP_PASSWORD:
-                server.login(SMTP_USERNAME, SMTP_PASSWORD)
-            server.send_message(msg)
-            
-    except Exception as e:
-        print(f"Error sending failure email: {e}")
-        # Update job status
-        if job_id in jobs:
-            jobs[job_id]['email_status'] = 'failed'
-            jobs[job_id]['email_error'] = str(e)
+    # Create a results directory if it doesn't exist
+    if not os.path.exists('results'):
+        os.makedirs('results')
+    
+    # Create a sample result
+    result_file = f"results/job_{job_id}.json"
+    sample_results = []
+    
+    # Create sample data based on the requested number of games
+    max_games = min(params.get('max_games', 10), 20)  # Limit to 20 for the mock version
+    
+    for i in range(max_games):
+        sample_results.append({
+            "title": f"Sample Game {i+1}",
+            "url": f"https://example.itch.io/sample-game-{i+1}",
+            "iframe_src": f"https://itch.io/embed-upload/1234567?color=333333&amp;dark=true",
+            "extracted_method": "mock_data"
+        })
+    
+    # Save the sample results
+    with open(result_file, 'w', encoding='utf-8') as f:
+        json.dump(sample_results, f, indent=2)
+    
+    # Update the job status
+    update_job(job_id, {
+        'status': 'completed',
+        'completed_at': datetime.now().isoformat(),
+        'result_count': len(sample_results),
+        'result_file': result_file,
+        'processed': max_games,
+        'successful': max_games,
+        'found': max_games
+    })
 
-@app.route('/')
-def index():
-    """Serve the main page"""
-    return send_from_directory('.', 'index.html')
+@app.route('/', defaults={'path': ''})
+@app.route('/<path:path>')
+def catch_all(path):
+    if path == '':
+        return send_from_directory('.', 'index.html')
+    else:
+        return send_from_directory('.', path)
 
 @app.route('/api/extract', methods=['POST'])
 def extract():
@@ -250,12 +220,7 @@ def extract():
     # Get request data
     data = request.json
     
-    # Validate request
-    if not data or not data.get('email'):
-        return jsonify({
-            'status': 'error',
-            'message': 'Email address is required'
-        }), 400
+    # Email is now optional
     
     # Generate job ID
     job_id = str(uuid.uuid4())
@@ -263,7 +228,7 @@ def extract():
     # Create job record
     jobs[job_id] = {
         'id': job_id,
-        'email': data.get('email'),
+        'email': data.get('email', ''),  # Email is now optional
         'params': {
             'max_games': data.get('max_games', 10),
             'offset': data.get('offset', 0),
@@ -278,13 +243,21 @@ def extract():
         'found': 0
     }
     
-    # Start extraction process in a new thread
-    thread = threading.Thread(
-        target=run_extraction_job,
-        args=(job_id, jobs[job_id]['params'])
-    )
-    thread.daemon = True
-    thread.start()
+    # Save job to file
+    save_job(job_id)
+    
+    # Check if we're running on Vercel or locally
+    if 'VERCEL' in os.environ:
+        # On Vercel, use mock processing since we can't run background threads
+        mock_process_job(job_id, jobs[job_id]['params'])
+    else:
+        # Start extraction process in a new thread for local development
+        thread = threading.Thread(
+            target=run_extraction_job,
+            args=(job_id, jobs[job_id]['params'])
+        )
+        thread.daemon = True
+        thread.start()
     
     # Return job ID to client
     return jsonify({
@@ -317,12 +290,52 @@ def job_status(job_id):
         }
     })
 
-@app.route('/<path:path>')
-def serve_static(path):
-    """Serve static files"""
-    return send_from_directory('.', path)
+# 添加新的下载API端点
+@app.route('/api/download/<job_id>')
+def download_results(job_id):
+    """Download job results"""
+    if job_id not in jobs:
+        return jsonify({
+            'status': 'error',
+            'message': 'Job not found'
+        }), 404
+    
+    if jobs[job_id]['status'] != 'completed':
+        return jsonify({
+            'status': 'error',
+            'message': 'Job is not completed yet'
+        }), 400
+    
+    result_file = jobs[job_id].get('result_file')
+    if not result_file or not os.path.exists(result_file):
+        return jsonify({
+            'status': 'error',
+            'message': 'Result file not found'
+        }), 404
+    
+    return send_file(
+        result_file,
+        mimetype='application/json',
+        as_attachment=True,
+        download_name=f'iframe_results_{job_id}.json'
+    )
 
+# Add a healthcheck endpoint for Vercel
+@app.route('/api/healthcheck')
+def healthcheck():
+    """Health check endpoint for Vercel"""
+    return jsonify({
+        'status': 'success',
+        'message': 'Service is running',
+        'version': '1.0.0',
+        'timestamp': datetime.now().isoformat()
+    })
+
+# For local development, we keep the old handlers
 if __name__ == '__main__':
+    # Load existing jobs
+    load_jobs()
+    
     # Create necessary directories
     setup_result_directories()
     
