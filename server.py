@@ -123,7 +123,7 @@ class FastItchIoScraper:
     
     def fetch_url(self, url):
         """
-        获取URL内容
+        获取URL内容，增加重试机制
         
         Args:
             url: 要获取的URL
@@ -131,45 +131,78 @@ class FastItchIoScraper:
         Returns:
             str: 页面HTML内容
         """
-        try:
-            headers = {
-                'User-Agent': self.get_random_user_agent(),
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1',
-                'Cache-Control': 'max-age=0',
-                'TE': 'Trailers'
-            }
-            
-            print(f"正在获取URL: {url}")
-            print(f"使用User-Agent: {headers['User-Agent']}")
-            
-            req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=10) as response:
-                html_content = response.read().decode('utf-8')
+        max_retries = 3
+        retry_count = 0
+        
+        while retry_count < max_retries:
+            try:
+                headers = {
+                    'User-Agent': self.get_random_user_agent(),
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.5',
+                    'Connection': 'keep-alive',
+                    'Upgrade-Insecure-Requests': '1',
+                    'Cache-Control': 'max-age=0',
+                    'TE': 'Trailers'
+                }
                 
-                # 保存HTML用于调试
-                if self.debug_save_html:
-                    try:
-                        if not os.path.exists(DEBUG_HTML_DIR):
-                            os.makedirs(DEBUG_HTML_DIR)
-                        
-                        # 从URL中提取游戏名称用作文件名
-                        game_name = url.split('/')[-1]
-                        debug_file = os.path.join(DEBUG_HTML_DIR, f"{game_name}.html")
-                        
-                        with open(debug_file, 'w', encoding='utf-8') as f:
-                            f.write(html_content)
+                print(f"正在获取URL: {url} (尝试 {retry_count+1}/{max_retries})")
+                print(f"使用User-Agent: {headers['User-Agent']}")
+                
+                req = urllib.request.Request(url, headers=headers)
+                with urllib.request.urlopen(req, timeout=15) as response:  # 增加超时时间
+                    html_content = response.read().decode('utf-8')
+                    
+                    # 保存HTML用于调试
+                    if self.debug_save_html:
+                        try:
+                            if not os.path.exists(DEBUG_HTML_DIR):
+                                os.makedirs(DEBUG_HTML_DIR)
                             
-                        print(f"已保存HTML到 {debug_file}")
-                    except Exception as e:
-                        print(f"保存HTML失败: {e}")
-                
-                return html_content
-        except Exception as e:
-            print(f"获取URL {url} 失败: {e}")
-            return ""
+                            # 从URL中提取游戏名称用作文件名
+                            game_name = url.split('/')[-1]
+                            debug_file = os.path.join(DEBUG_HTML_DIR, f"{game_name}.html")
+                            
+                            with open(debug_file, 'w', encoding='utf-8') as f:
+                                f.write(html_content)
+                                
+                            print(f"已保存HTML到 {debug_file}")
+                        except Exception as e:
+                            print(f"保存HTML失败: {e}")
+                    
+                    return html_content
+            except urllib.error.HTTPError as e:
+                print(f"HTTP错误: {e.code} - {e.reason}, URL: {url}")
+                retry_count += 1
+                if retry_count < max_retries:
+                    wait_time = retry_count * 2  # 逐渐增加等待时间
+                    print(f"等待 {wait_time} 秒后重试...")
+                    time.sleep(wait_time)
+                else:
+                    print(f"达到最大重试次数，放弃获取URL: {url}")
+                    return ""
+            except urllib.error.URLError as e:
+                print(f"URL错误: {e.reason}, URL: {url}")
+                retry_count += 1
+                if retry_count < max_retries:
+                    wait_time = retry_count * 2
+                    print(f"等待 {wait_time} 秒后重试...")
+                    time.sleep(wait_time)
+                else:
+                    print(f"达到最大重试次数，放弃获取URL: {url}")
+                    return ""
+            except Exception as e:
+                print(f"获取URL {url} 失败: {e}")
+                retry_count += 1
+                if retry_count < max_retries:
+                    wait_time = retry_count * 2
+                    print(f"等待 {wait_time} 秒后重试...")
+                    time.sleep(wait_time)
+                else:
+                    print(f"达到最大重试次数，放弃获取URL: {url}")
+                    return ""
+        
+        return ""
     
     def get_game_page_urls(self, limit=None):
         """
@@ -631,191 +664,249 @@ def mock_process_job(job_id, params):
         result_file = os.path.join(RESULTS_DIR, f"job_{job_id}.json")
         
         # 限制最大游戏数量，避免超时
-        max_games = min(params.get('max_games', 10), 20)  # 限制为最多20个游戏
+        max_games = min(params.get('max_games', 5), 10)  # 减少默认值和上限，避免超时
         offset = params.get('offset', 0)
-        delay = params.get('delay', 0.2)  # 使用请求的延迟值，但默认值较小，加速爬取
+        delay = min(max(params.get('delay', 1.0), 1.0), 3.0)  # 确保延迟至少1秒，最多3秒
         
-        # 总是尝试使用真实爬虫，除非环境变量明确禁用
+        # 强制使用真实爬虫，除非明确禁用（调试目的）
         use_real_scraper = os.environ.get('USE_REAL_SCRAPER', 'true').lower() != 'false'
         print(f"是否使用真实爬虫: {use_real_scraper}")
         
-        # 使用真实爬虫进行爬取
-        if use_real_scraper:
-            print("=== 使用真实爬虫进行爬取 ===")
-            print(f"最大游戏数: {max_games}, 偏移量: {offset}, 延迟: {delay}秒")
-            
-            try:
-                # 创建爬虫实例
-                scraper = FastItchIoScraper(max_games=max_games, start_offset=offset, delay=delay)
-                
-                # 执行爬取
-                results, stats = scraper.scrape()
-                
-                # 更新状态并输出统计信息
-                print(f"爬取完成: 处理了 {stats['total_processed']} 个游戏，成功提取 {stats['successful_extractions']} 个iframe源")
-                update_job(job_id, {
-                    'processed': stats['total_processed'],
-                    'successful': stats['successful_extractions']
-                })
-                
-                # 如果爬取成功但结果为空，回退到预设数据
-                if not results:
-                    print("真实爬取无结果，回退到预设数据")
-                    use_real_scraper = False
-                else:
-                    print(f"真实爬取成功，获取到 {len(results)} 个结果")
-                    sample_results = results
-            except Exception as e:
-                print(f"真实爬取失败: {e}")
-                import traceback
-                print(f"详细错误: {traceback.format_exc()}")
-                print("回退到预设数据")
-                use_real_scraper = False
+        # 创建独立的日志文件
+        log_file_path = os.path.join(LOGS_DIR, f"job_{job_id}.log")
+        if not os.path.exists(LOGS_DIR):
+            os.makedirs(LOGS_DIR)
         
-        # 如果不使用真实爬虫或爬取失败，使用预设数据
-        if not use_real_scraper:
-            print("=== 使用预设数据 ===")
-            # 使用预先收集的真实iframe数据
-            real_game_data = [
-                {
-                    "title": "Polytrack",
-                    "url": "https://dddoooccc.itch.io/polytrack",
-                    "iframe_src": "https://itch.io/embed-upload/8357347?color=444444",
-                    "extracted_method": "real_preset_data"
-                },
-                {
-                    "title": "Mr. Magpie's Harmless Card Game",
-                    "url": "https://magpiecollective.itch.io/mr-magpies-harmless-card-game",
-                    "iframe_src": "https://itch.io/embed-upload/8410214?color=222222",
-                    "extracted_method": "real_preset_data"
-                },
-                {
-                    "title": "Narrow One",
-                    "url": "https://krajzeg.itch.io/narrow-one",
-                    "iframe_src": "https://itch.io/embed-upload/2034417?color=222336",
-                    "extracted_method": "real_preset_data"
-                },
-                {
-                    "title": "Unleashed",
-                    "url": "https://apoc.itch.io/unleashed",
-                    "iframe_src": "https://itch.io/embed-upload/1694088?color=333333",
-                    "extracted_method": "real_preset_data"
-                },
-                {
-                    "title": "GET YOKED: Extreme Bodybuilding",
-                    "url": "https://frenchbread.itch.io/get-yoked-2",
-                    "iframe_src": "https://itch.io/embed-upload/4507744?color=3a3a3a",
-                    "extracted_method": "real_preset_data"
-                },
-                {
-                    "title": "Friday Night Funkin'",
-                    "url": "https://ninja-muffin24.itch.io/funkin",
-                    "iframe_src": "https://itch.io/embed-upload/3671753?color=ffffff",
-                    "extracted_method": "real_preset_data"
-                },
-                {
-                    "title": "TRACE: Definitive Edition",
-                    "url": "https://pnkl.itch.io/trace-definitive-edition",
-                    "iframe_src": "https://itch.io/embed-upload/7519291?color=4d4d4d",
-                    "extracted_method": "real_preset_data"
-                },
-                {
-                    "title": "Cantata",
-                    "url": "https://afterthought-games.itch.io/cantata",
-                    "iframe_src": "https://itch.io/embed-upload/2358082?color=16303b",
-                    "extracted_method": "real_preset_data"
-                },
-                {
-                    "title": "Chasing Control",
-                    "url": "https://jn.itch.io/chasing-control",
-                    "iframe_src": "https://itch.io/embed-upload/7519291?color=2d2d2d",
-                    "extracted_method": "real_preset_data"
-                },
-                {
-                    "title": "Sort the Court!",
-                    "url": "https://graebor.itch.io/sort-the-court",
-                    "iframe_src": "https://itch.io/embed/42665?dark=true",
-                    "extracted_method": "real_preset_data"
-                },
-                {
-                    "title": "Before the Darkness",
-                    "url": "https://eumolpo.itch.io/before-the-darkness",
-                    "iframe_src": "https://itch.io/embed-upload/5337708?color=100001",
-                    "extracted_method": "real_preset_data"
-                },
-                {
-                    "title": "Space Shooter",
-                    "url": "https://maximilian-winter.itch.io/space-shooter",
-                    "iframe_src": "https://itch.io/embed-upload/7563568?color=000000",
-                    "extracted_method": "real_preset_data"
-                },
-                {
-                    "title": "Spellbreak Alpha",
-                    "url": "https://proletariat.itch.io/spellbreak",
-                    "iframe_src": "https://itch.io/embed/276014?border_width=0&amp;bg_color=000000&amp;fg_color=44D6A2&amp;link_color=44D6A2&amp;border_color=000000",
-                    "extracted_method": "real_preset_data"
-                },
-                {
-                    "title": "Wander Home",
-                    "url": "https://lambdadiode.itch.io/wander-home",
-                    "iframe_src": "https://itch.io/embed/1472578?bg_color=d6c7ae&amp;fg_color=222222&amp;link_color=1dabe8&amp;border_color=4d463d",
-                    "extracted_method": "real_preset_data"
-                },
-                {
-                    "title": "Shoot-Out!",
-                    "url": "https://cg-games.itch.io/shoot-out",
-                    "iframe_src": "https://itch.io/embed-upload/4023233?color=000000",
-                    "extracted_method": "real_preset_data"
-                }
-            ]
+        with open(log_file_path, 'w', encoding='utf-8') as log_file:
+            log_file.write(f"===== 任务开始: {job_id} =====\n")
+            log_file.write(f"时间: {datetime.now().isoformat()}\n")
+            log_file.write(f"参数: max_games={max_games}, offset={offset}, delay={delay}\n")
+            log_file.write(f"环境变量: USE_REAL_SCRAPER={os.environ.get('USE_REAL_SCRAPER', 'not_set')}\n")
+            log_file.write(f"运行环境: {'Vercel' if 'VERCEL' in os.environ else '本地'}\n")
+            log_file.flush()
             
-            # 根据请求的游戏数量返回相应数量的真实数据
-            max_games = min(max_games, len(real_game_data))
-            sample_results = real_game_data[:max_games]
-            
-            # 如果真实数据不够，再添加模拟数据补充
-            if max_games > len(real_game_data):
-                for i in range(len(real_game_data), max_games):
-                    sample_results.append({
-                        "title": f"Sample Game {i+1}",
-                        "url": f"https://example.itch.io/sample-game-{i+1}",
-                        "iframe_src": f"https://itch.io/embed-upload/1234567?color=333333",
-                        "extracted_method": "mock_data"
+            # 使用真实爬虫进行爬取
+            if use_real_scraper:
+                log_file.write(f"=== 使用真实爬虫进行爬取 ===\n")
+                log_file.flush()
+                print("=== 使用真实爬虫进行爬取 ===")
+                print(f"最大游戏数: {max_games}, 偏移量: {offset}, 延迟: {delay}秒")
+                
+                try:
+                    # 创建爬虫实例
+                    scraper = FastItchIoScraper(max_games=max_games, start_offset=offset, delay=delay)
+                    
+                    # 执行爬取
+                    results, stats = scraper.scrape()
+                    
+                    # 更新状态并输出统计信息
+                    log_file.write(f"爬取完成: 处理了 {stats['total_processed']} 个游戏，成功提取 {stats['successful_extractions']} 个iframe源\n")
+                    log_file.write(f"耗时: {stats['elapsed_seconds']:.2f}秒\n")
+                    log_file.flush()
+                    
+                    update_job(job_id, {
+                        'processed': stats['total_processed'],
+                        'successful': stats['successful_extractions']
                     })
-        
-        # 添加元数据到结果中
-        result_with_metadata = {
-            "metadata": {
-                "job_id": job_id,
-                "timestamp": datetime.now().isoformat(),
-                "params": params,
-                "source": "real_scraper" if use_real_scraper else "preset_data",
-                "count": len(sample_results)
-            },
-            "results": sample_results
-        }
-        
-        # 保存结果
-        with open(result_file, 'w', encoding='utf-8') as f:
-            json.dump(result_with_metadata, f, indent=2, ensure_ascii=False)
-        
-        print(f"结果已保存到: {result_file}")
-        
-        # 更新任务状态
-        update_job(job_id, {
-            'status': 'completed',
-            'completed_at': datetime.now().isoformat(),
-            'result_count': len(sample_results),
-            'result_file': result_file,
-            'processed': len(sample_results) if not use_real_scraper else stats['total_processed'],
-            'successful': len(sample_results) if not use_real_scraper else stats['successful_extractions'],
-            'found': len(sample_results) if not use_real_scraper else stats['total_processed'],
-            'source': "real_scraper" if use_real_scraper else "preset_data"
-        })
+                    
+                    # 详细记录结果
+                    if results:
+                        log_file.write(f"成功获取 {len(results)} 个结果\n")
+                        for i, result in enumerate(results):
+                            log_file.write(f"结果 {i+1}: {result.get('title')} - {result.get('iframe_src')}\n")
+                        log_file.flush()
+                        
+                        # 确保每个结果都有iframe_src，否则跳过
+                        valid_results = []
+                        for result in results:
+                            if result.get('iframe_src'):
+                                valid_results.append(result)
+                            else:
+                                log_file.write(f"警告: 跳过没有iframe_src的结果: {result.get('title')}\n")
+                        
+                        if valid_results:
+                            sample_results = valid_results
+                            log_file.write(f"过滤后有效结果数: {len(valid_results)}\n")
+                            log_file.flush()
+                        else:
+                            log_file.write("警告: 过滤后没有有效结果，将回退到预设数据\n")
+                            log_file.flush()
+                            use_real_scraper = False
+                    else:
+                        log_file.write("警告: 爬取完成但没有结果，将回退到预设数据\n")
+                        log_file.flush()
+                        use_real_scraper = False
+                except Exception as e:
+                    log_file.write(f"错误: 真实爬取失败: {e}\n")
+                    import traceback
+                    error_trace = traceback.format_exc()
+                    log_file.write(f"错误详情:\n{error_trace}\n")
+                    log_file.write("将回退到预设数据\n")
+                    log_file.flush()
+                    
+                    print(f"真实爬取失败: {e}")
+                    import traceback
+                    print(f"详细错误: {traceback.format_exc()}")
+                    print("回退到预设数据")
+                    use_real_scraper = False
+            
+            # 如果不使用真实爬虫或爬取失败，使用预设数据
+            if not use_real_scraper:
+                log_file.write("=== 使用预设数据 ===\n")
+                log_file.flush()
+                print("=== 使用预设数据 ===")
+                # 使用预先收集的真实iframe数据
+                real_game_data = [
+                    {
+                        "title": "Polytrack",
+                        "url": "https://dddoooccc.itch.io/polytrack",
+                        "iframe_src": "https://itch.io/embed-upload/8357347?color=444444",
+                        "extracted_method": "real_preset_data"
+                    },
+                    {
+                        "title": "Mr. Magpie's Harmless Card Game",
+                        "url": "https://magpiecollective.itch.io/mr-magpies-harmless-card-game",
+                        "iframe_src": "https://itch.io/embed-upload/8410214?color=222222",
+                        "extracted_method": "real_preset_data"
+                    },
+                    {
+                        "title": "Narrow One",
+                        "url": "https://krajzeg.itch.io/narrow-one",
+                        "iframe_src": "https://itch.io/embed-upload/2034417?color=222336",
+                        "extracted_method": "real_preset_data"
+                    },
+                    {
+                        "title": "Unleashed",
+                        "url": "https://apoc.itch.io/unleashed",
+                        "iframe_src": "https://itch.io/embed-upload/1694088?color=333333",
+                        "extracted_method": "real_preset_data"
+                    },
+                    {
+                        "title": "GET YOKED: Extreme Bodybuilding",
+                        "url": "https://frenchbread.itch.io/get-yoked-2",
+                        "iframe_src": "https://itch.io/embed-upload/4507744?color=3a3a3a",
+                        "extracted_method": "real_preset_data"
+                    },
+                    {
+                        "title": "Friday Night Funkin'",
+                        "url": "https://ninja-muffin24.itch.io/funkin",
+                        "iframe_src": "https://itch.io/embed-upload/3671753?color=ffffff",
+                        "extracted_method": "real_preset_data"
+                    },
+                    {
+                        "title": "TRACE: Definitive Edition",
+                        "url": "https://pnkl.itch.io/trace-definitive-edition",
+                        "iframe_src": "https://itch.io/embed-upload/7519291?color=4d4d4d",
+                        "extracted_method": "real_preset_data"
+                    },
+                    {
+                        "title": "Cantata",
+                        "url": "https://afterthought-games.itch.io/cantata",
+                        "iframe_src": "https://itch.io/embed-upload/2358082?color=16303b",
+                        "extracted_method": "real_preset_data"
+                    },
+                    {
+                        "title": "Chasing Control",
+                        "url": "https://jn.itch.io/chasing-control",
+                        "iframe_src": "https://itch.io/embed-upload/7519291?color=2d2d2d",
+                        "extracted_method": "real_preset_data"
+                    },
+                    {
+                        "title": "Sort the Court!",
+                        "url": "https://graebor.itch.io/sort-the-court",
+                        "iframe_src": "https://itch.io/embed/42665?dark=true",
+                        "extracted_method": "real_preset_data"
+                    },
+                    {
+                        "title": "Before the Darkness",
+                        "url": "https://eumolpo.itch.io/before-the-darkness",
+                        "iframe_src": "https://itch.io/embed-upload/5337708?color=100001",
+                        "extracted_method": "real_preset_data"
+                    },
+                    {
+                        "title": "Space Shooter",
+                        "url": "https://maximilian-winter.itch.io/space-shooter",
+                        "iframe_src": "https://itch.io/embed-upload/7563568?color=000000",
+                        "extracted_method": "real_preset_data"
+                    },
+                    {
+                        "title": "Spellbreak Alpha",
+                        "url": "https://proletariat.itch.io/spellbreak",
+                        "iframe_src": "https://itch.io/embed/276014?border_width=0&amp;bg_color=000000&amp;fg_color=44D6A2&amp;link_color=44D6A2&amp;border_color=000000",
+                        "extracted_method": "real_preset_data"
+                    },
+                    {
+                        "title": "Wander Home",
+                        "url": "https://lambdadiode.itch.io/wander-home",
+                        "iframe_src": "https://itch.io/embed/1472578?bg_color=d6c7ae&amp;fg_color=222222&amp;link_color=1dabe8&amp;border_color=4d463d",
+                        "extracted_method": "real_preset_data"
+                    },
+                    {
+                        "title": "Shoot-Out!",
+                        "url": "https://cg-games.itch.io/shoot-out",
+                        "iframe_src": "https://itch.io/embed-upload/4023233?color=000000",
+                        "extracted_method": "real_preset_data"
+                    }
+                ]
+                
+                # 记录预设数据
+                log_file.write(f"使用预设数据，共 {len(real_game_data)} 条记录\n")
+                
+                # 根据请求的游戏数量返回相应数量的真实数据
+                max_games = min(max_games, len(real_game_data))
+                sample_results = real_game_data[:max_games]
+                
+                log_file.write(f"返回 {len(sample_results)} 条预设数据\n")
+                log_file.flush()
+            
+            # 添加元数据到结果中
+            result_with_metadata = {
+                "metadata": {
+                    "job_id": job_id,
+                    "timestamp": datetime.now().isoformat(),
+                    "params": params,
+                    "source": "real_scraper" if use_real_scraper else "preset_data",
+                    "count": len(sample_results)
+                },
+                "results": sample_results
+            }
+            
+            # 保存结果
+            with open(result_file, 'w', encoding='utf-8') as f:
+                json.dump(result_with_metadata, f, indent=2, ensure_ascii=False)
+            
+            log_file.write(f"结果已保存到: {result_file}\n")
+            log_file.write(f"===== 任务结束: {job_id} =====\n")
+            log_file.flush()
+            
+            print(f"结果已保存到: {result_file}")
+            
+            # 更新任务状态
+            update_job(job_id, {
+                'status': 'completed',
+                'completed_at': datetime.now().isoformat(),
+                'result_count': len(sample_results),
+                'result_file': result_file,
+                'processed': len(sample_results) if not use_real_scraper else stats['total_processed'],
+                'successful': len(sample_results) if not use_real_scraper else stats['successful_extractions'],
+                'found': len(sample_results) if not use_real_scraper else stats['total_processed'],
+                'source': "real_scraper" if use_real_scraper else "preset_data"
+            })
     except Exception as e:
         print(f"Error in mock processing: {e}")
         import traceback
-        print(f"详细错误: {traceback.format_exc()}")
+        error_trace = traceback.format_exc()
+        print(f"详细错误: {error_trace}")
+        
+        # 记录错误到日志文件
+        try:
+            with open(log_file_path, 'a', encoding='utf-8') as log_file:
+                log_file.write(f"致命错误: {e}\n")
+                log_file.write(f"错误详情:\n{error_trace}\n")
+                log_file.write(f"===== 任务失败: {job_id} =====\n")
+        except:
+            pass
+            
         update_job(job_id, {
             'status': 'failed',
             'error': str(e)
