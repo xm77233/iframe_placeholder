@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>itch.io Game Iframe Extractor - Extract iframe sources from itch.io games</title>
+    <meta name="description" content="A simple online tool to extract iframe sources from free web games on itch.io">
+    <link rel="canonical" href="https://iframe-extractor.example.com">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        apple: {
+                            blue: '#007AFF',
+                            indigo: '#5856D6',
+                            purple: '#AF52DE',
+                            pink: '#FF2D55',
+                            red: '#FF3B30',
+                            orange: '#FF9500',
+                            yellow: '#FFCC00',
+                            green: '#34C759',
+                            teal: '#5AC8FA',
+                            gray: {
+                                100: '#F2F2F7',
+                                200: '#E5E5EA',
+                                300: '#D1D1D6',
+                                400: '#C7C7CC',
+                                500: '#AEAEB2',
+                                600: '#8E8E93',
+                                700: '#636366',
+                                800: '#48484A',
+                                900: '#3A3A3C',
+                                950: '#1C1C1E',
+                            },
+                        },
+                    },
+                },
+            },
+        }
+    </script>
+    <style>
+        .loader {
+            border-top-color: #007AFF;
+            -webkit-animation: spinner 1.5s linear infinite;
+            animation: spinner 1.5s linear infinite;
+        }
+        
+        @-webkit-keyframes spinner {
+            0% { -webkit-transform: rotate(0deg); }
+            100% { -webkit-transform: rotate(360deg); }
+        }
+        
+        @keyframes spinner {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="bg-apple-gray-100 text-apple-gray-900 min-h-screen">
+    <div class="container mx-auto px-4 py-8 max-w-4xl">
+        <header class="mb-12 text-center">
+            <h1 class="text-3xl md:text-4xl font-bold mb-3">itch.io Game Iframe Extractor</h1>
+            <p class="text-apple-gray-600 max-w-2xl mx-auto">
+                Extract iframe sources from free web games on itch.io for embedding in your website or application.
+                Simply configure your extraction parameters and receive results via email.
+            </p>
+        </header>
+        
+        <main>
+            <!-- Job Submission Section -->
+            <section class="bg-white rounded-xl shadow-md overflow-hidden mb-12">
+                <div class="p-6">
+                    <h2 class="text-xl font-semibold mb-6">Extract Game Iframes</h2>
+                    
+                    <form id="extraction-form" class="space-y-6">
+                        <!-- Email Input -->
+                        <div>
+                            <label for="email" class="block text-sm font-medium text-apple-gray-700 mb-1">
+                                Email Address <span class="text-apple-red">*</span>
+                            </label>
+                            <input type="email" id="email" name="email" required
+                                class="w-full bg-apple-gray-100 border border-apple-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-apple-blue focus:border-transparent"
+                                placeholder="Your email to receive results">
+                            <p class="mt-1 text-xs text-apple-gray-500">We'll send the extraction results to this email address</p>
+                        </div>
+                        
+                        <!-- Game Count & Options -->
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div>
+                                <label for="max-games" class="block text-sm font-medium text-apple-gray-700 mb-1">
+                                    Maximum Games to Extract
+                                </label>
+                                <div class="flex items-center space-x-3">
+                                    <input type="number" id="max-games" name="max_games" 
+                                        class="w-full bg-apple-gray-100 border border-apple-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-apple-blue focus:border-transparent"
+                                        min="1" max="500" value="10" placeholder="Number of games">
+                                    <span class="text-sm text-apple-gray-600">Games</span>
+                                </div>
+                                <p class="mt-1 text-xs text-apple-gray-500">Limit: 500 games per request</p>
+                            </div>
+                            
+                            <div>
+                                <label for="offset" class="block text-sm font-medium text-apple-gray-700 mb-1">
+                                    Starting Offset
+                                </label>
+                                <div class="flex items-center space-x-3">
+                                    <input type="number" id="offset" name="offset" 
+                                        class="w-full bg-apple-gray-100 border border-apple-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-apple-blue focus:border-transparent"
+                                        min="0" value="0" placeholder="Start from">
+                                    <span class="text-sm text-apple-gray-600">Offset</span>
+                                </div>
+                                <p class="mt-1 text-xs text-apple-gray-500">Skip first N games (for pagination)</p>
+                            </div>
+                        </div>
+                        
+                        <!-- Advanced Options (Toggleable) -->
+                        <div>
+                            <button type="button" id="toggle-advanced" 
+                                class="text-apple-blue text-sm flex items-center focus:outline-none">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-1" viewBox="0 0 20 20" fill="currentColor">
+                                    <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
+                                </svg>
+                                Advanced Options
+                            </button>
+                            
+                            <div id="advanced-options" class="hidden mt-4 space-y-4 border-t border-apple-gray-200 pt-4">
+                                <div>
+                                    <label for="delay" class="block text-sm font-medium text-apple-gray-700 mb-1">
+                                        Request Delay (seconds)
+                                    </label>
+                                    <input type="number" id="delay" name="delay" 
+                                        class="w-full bg-apple-gray-100 border border-apple-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-apple-blue focus:border-transparent"
+                                        min="1" max="10" step="0.5" value="2">
+                                    <p class="mt-1 text-xs text-apple-gray-500">Time between requests (helps avoid rate limits)</p>
+                                </div>
+                                
+                                <div>
+                                    <label class="block text-sm font-medium text-apple-gray-700 mb-1">
+                                        Game Categories
+                                    </label>
+                                    <div class="grid grid-cols-2 gap-2">
+                                        <label class="flex items-center">
+                                            <input type="checkbox" name="categories" value="action" checked
+                                                class="h-4 w-4 text-apple-blue focus:ring-apple-blue border-apple-gray-300 rounded">
+                                            <span class="ml-2 text-sm">Action</span>
+                                        </label>
+                                        <label class="flex items-center">
+                                            <input type="checkbox" name="categories" value="adventure" checked
+                                                class="h-4 w-4 text-apple-blue focus:ring-apple-blue border-apple-gray-300 rounded">
+                                            <span class="ml-2 text-sm">Adventure</span>
+                                        </label>
+                                        <label class="flex items-center">
+                                            <input type="checkbox" name="categories" value="puzzle" checked
+                                                class="h-4 w-4 text-apple-blue focus:ring-apple-blue border-apple-gray-300 rounded">
+                                            <span class="ml-2 text-sm">Puzzle</span>
+                                        </label>
+                                        <label class="flex items-center">
+                                            <input type="checkbox" name="categories" value="platformer" checked
+                                                class="h-4 w-4 text-apple-blue focus:ring-apple-blue border-apple-gray-300 rounded">
+                                            <span class="ml-2 text-sm">Platformer</span>
+                                        </label>
+                                    </div>
+                                </div>
+                                
+                                <div>
+                                    <label class="block text-sm font-medium text-apple-gray-700 mb-1">
+                                        Include Additional Information
+                                    </label>
+                                    <div class="space-y-2">
+                                        <label class="flex items-center">
+                                            <input type="checkbox" name="include_info" value="game_description" checked
+                                                class="h-4 w-4 text-apple-blue focus:ring-apple-blue border-apple-gray-300 rounded">
+                                            <span class="ml-2 text-sm">Game Description</span>
+                                        </label>
+                                        <label class="flex items-center">
+                                            <input type="checkbox" name="include_info" value="thumbnail_url" checked
+                                                class="h-4 w-4 text-apple-blue focus:ring-apple-blue border-apple-gray-300 rounded">
+                                            <span class="ml-2 text-sm">Thumbnail URLs</span>
+                                        </label>
+                                        <label class="flex items-center">
+                                            <input type="checkbox" name="include_info" value="author_info"
+                                                class="h-4 w-4 text-apple-blue focus:ring-apple-blue border-apple-gray-300 rounded">
+                                            <span class="ml-2 text-sm">Author Information</span>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Submission Button -->
+                        <div class="pt-2">
+                            <button type="submit" id="submit-btn"
+                                class="w-full bg-apple-blue hover:bg-opacity-90 text-white font-medium rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-apple-blue focus:ring-opacity-50 transition-colors">
+                                Start Extraction
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </section>
+            
+            <!-- Status Section (Initially Hidden) -->
+            <section id="status-section" class="hidden bg-white rounded-xl shadow-md overflow-hidden mb-12">
+                <div class="p-6">
+                    <h2 class="text-xl font-semibold mb-4">Extraction Status</h2>
+                    
+                    <div class="flex items-center justify-center py-6">
+                        <div class="text-center">
+                            <div class="loader inline-block h-12 w-12 rounded-full border-4 border-apple-gray-200"></div>
+                            <p class="mt-4 text-apple-gray-700" id="status-message">
+                                Your extraction job is being processed...
+                            </p>
+                            <p class="mt-2 text-sm text-apple-gray-500">
+                                We'll send the results to your email when complete.
+                            </p>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-6 flex justify-center">
+                        <button id="new-job-btn" 
+                            class="bg-apple-blue hover:bg-opacity-90 text-white font-medium rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-apple-blue focus:ring-opacity-50 transition-colors">
+                            Submit Another Job
+                        </button>
+                    </div>
+                </div>
+            </section>
+            
+            <!-- How It Works Section -->
+            <section class="bg-white rounded-xl shadow-md overflow-hidden mb-12">
+                <div class="p-6">
+                    <h2 class="text-xl font-semibold mb-6">How It Works</h2>
+                    
+                    <div class="space-y-6">
+                        <div class="flex">
+                            <div class="flex-shrink-0">
+                                <div class="flex items-center justify-center h-10 w-10 rounded-full bg-apple-blue bg-opacity-10 text-apple-blue">
+                                    <span class="text-lg font-semibold">1</span>
+                                </div>
+                            </div>
+                            <div class="ml-4">
+                                <h3 class="text-lg font-medium text-apple-gray-900">Configure Your Extraction</h3>
+                                <p class="mt-1 text-apple-gray-600">
+                                    Enter your email and set your desired parameters for the iframe extraction. You can specify the
+                                    number of games, starting offset, and other options to customize your results.
+                                </p>
+                            </div>
+                        </div>
+                        
+                        <div class="flex">
+                            <div class="flex-shrink-0">
+                                <div class="flex items-center justify-center h-10 w-10 rounded-full bg-apple-blue bg-opacity-10 text-apple-blue">
+                                    <span class="text-lg font-semibold">2</span>
+                                </div>
+                            </div>
+                            <div class="ml-4">
+                                <h3 class="text-lg font-medium text-apple-gray-900">We Process Your Request</h3>
+                                <p class="mt-1 text-apple-gray-600">
+                                    Our system will queue your job and process it in the background. We'll visit each game page
+                                    and extract the iframe source using multiple detection methods for maximum compatibility.
+                                </p>
+                            </div>
+                        </div>
+                        
+                        <div class="flex">
+                            <div class="flex-shrink-0">
+                                <div class="flex items-center justify-center h-10 w-10 rounded-full bg-apple-blue bg-opacity-10 text-apple-blue">
+                                    <span class="text-lg font-semibold">3</span>
+                                </div>
+                            </div>
+                            <div class="ml-4">
+                                <h3 class="text-lg font-medium text-apple-gray-900">Receive Your Results</h3>
+                                <p class="mt-1 text-apple-gray-600">
+                                    Once processing is complete, we'll send the results to your email. You'll receive a JSON file
+                                    containing all the extracted iframe sources and any additional information you requested.
+                                </p>
+                            </div>
+                        </div>
+                        
+                        <div class="flex">
+                            <div class="flex-shrink-0">
+                                <div class="flex items-center justify-center h-10 w-10 rounded-full bg-apple-blue bg-opacity-10 text-apple-blue">
+                                    <span class="text-lg font-semibold">4</span>
+                                </div>
+                            </div>
+                            <div class="ml-4">
+                                <h3 class="text-lg font-medium text-apple-gray-900">Use The Results</h3>
+                                <p class="mt-1 text-apple-gray-600">
+                                    Embed the games in your website or application using the extracted iframe sources. Our results
+                                    are ready-to-use and include all the necessary attributes for proper embedding.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+            
+            <!-- FAQ Section -->
+            <section class="bg-white rounded-xl shadow-md overflow-hidden">
+                <div class="p-6">
+                    <h2 class="text-xl font-semibold mb-6">Frequently Asked Questions</h2>
+                    
+                    <div class="space-y-4">
+                        <div>
+                            <h3 class="text-lg font-medium text-apple-gray-900">Is this service free?</h3>
+                            <p class="mt-1 text-apple-gray-600">
+                                Yes, this service is completely free for extracting up to 500 games per request. For larger
+                                volume needs, please contact us for custom solutions.
+                            </p>
+                        </div>
+                        
+                        <div>
+                            <h3 class="text-lg font-medium text-apple-gray-900">How long does processing take?</h3>
+                            <p class="mt-1 text-apple-gray-600">
+                                Processing time depends on the number of games you're extracting. Typically, it takes about
+                                1-2 minutes per 10 games due to request delays to respect itch.io's servers.
+                            </p>
+                        </div>
+                        
+                        <div>
+                            <h3 class="text-lg font-medium text-apple-gray-900">Why do I need to provide my email?</h3>
+                            <p class="mt-1 text-apple-gray-600">
+                                Your email is required to deliver the extraction results. We process requests asynchronously
+                                and notify you when your results are ready. We don't use your email for marketing purposes.
+                            </p>
+                        </div>
+                        
+                        <div>
+                            <h3 class="text-lg font-medium text-apple-gray-900">Will all games work properly when embedded?</h3>
+                            <p class="mt-1 text-apple-gray-600">
+                                Most games will work when embedded, but some may have issues with audio autoplay or other
+                                browser restrictions. We provide our iframe_viewer.html file in the results to help you
+                                deal with common embedding issues.
+                            </p>
+                        </div>
+                        
+                        <div>
+                            <h3 class="text-lg font-medium text-apple-gray-900">Is this allowed by itch.io's terms of service?</h3>
+                            <p class="mt-1 text-apple-gray-600">
+                                This tool is for educational purposes and personal use. Always respect itch.io's terms of service
+                                and game developers' rights when using the extracted iframes.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+        
+        <footer class="mt-12 text-center text-apple-gray-600 text-sm">
+            <p>itch.io Game Iframe Extractor &copy; 2023</p>
+            <p class="mt-1">This is an unofficial tool and not affiliated with itch.io</p>
+        </footer>
+    </div>
+    
+    <script>
+        // Toggle advanced options
+        const toggleAdvanced = document.getElementById('toggle-advanced');
+        const advancedOptions = document.getElementById('advanced-options');
+        
+        toggleAdvanced.addEventListener('click', () => {
+            advancedOptions.classList.toggle('hidden');
+            
+            // Change the arrow direction
+            const arrow = toggleAdvanced.querySelector('svg');
+            if (advancedOptions.classList.contains('hidden')) {
+                arrow.innerHTML = '<path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />';
+            } else {
+                arrow.innerHTML = '<path fill-rule="evenodd" d="M14.707 12.707a1 1 0 01-1.414 0L10 9.414l-3.293 3.293a1 1 0 01-1.414-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 010 1.414z" clip-rule="evenodd" />';
+            }
+        });
+        
+        // Form submission
+        const extractionForm = document.getElementById('extraction-form');
+        const statusSection = document.getElementById('status-section');
+        const newJobBtn = document.getElementById('new-job-btn');
+        
+        extractionForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            
+            // Show status section and hide form
+            extractionForm.parentElement.parentElement.classList.add('hidden');
+            statusSection.classList.remove('hidden');
+            
+            // Get form data
+            const formData = new FormData(extractionForm);
+            const data = {};
+            
+            // Handle regular form fields
+            for (const [key, value] of formData.entries()) {
+                // Skip checkboxes - we'll handle them separately
+                if (key !== 'categories' && key !== 'include_info') {
+                    data[key] = value;
+                }
+            }
+            
+            // Handle checkboxes (multiple values)
+            data.categories = formData.getAll('categories');
+            data.include_info = formData.getAll('include_info');
+            
+            // Update status while processing
+            document.getElementById('status-message').textContent = 'Processing your request...';
+            
+            // Send request to backend
+            fetch('/api/extract', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(data),
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error(`HTTP error ${response.status}`);
+                }
+                return response.json();
+            })
+            .then(result => {
+                if (result.status === 'success') {
+                    // Store job ID for status checks
+                    window.currentJobId = result.job_id;
+                    
+                    // Start polling for job status
+                    pollJobStatus(result.job_id);
+                    
+                    document.getElementById('status-message').textContent = 
+                        'Your extraction job has been queued. We\'ll email you the results when complete.';
+                } else {
+                    throw new Error(result.message || 'Unknown error');
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                document.getElementById('status-message').textContent = 
+                    `There was an error processing your request: ${error.message}. Please try again.`;
+            });
+        });
+        
+        // Poll for job status
+        function pollJobStatus(jobId) {
+            if (!jobId) return;
+            
+            const statusInterval = setInterval(() => {
+                fetch(`/api/status/${jobId}`)
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error(`HTTP error ${response.status}`);
+                        }
+                        return response.json();
+                    })
+                    .then(result => {
+                        if (result.status === 'success') {
+                            const job = result.job;
+                            
+                            // Update status message based on job status
+                            if (job.status === 'processing') {
+                                document.getElementById('status-message').textContent = 
+                                    `Processing in progress: ${job.processed} games processed, ${job.successful} iframe sources found.`;
+                            } else if (job.status === 'completed') {
+                                document.getElementById('status-message').textContent = 
+                                    `Extraction completed! ${job.result_count} iframe sources have been sent to your email.`;
+                                
+                                // Stop polling once completed
+                                clearInterval(statusInterval);
+                            } else if (job.status === 'failed') {
+                                document.getElementById('status-message').textContent = 
+                                    'Extraction failed. Please check your email for details or try again.';
+                                
+                                // Stop polling once failed
+                                clearInterval(statusInterval);
+                            }
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Error checking job status:', error);
+                        // Don't update UI on error, just log it
+                    });
+            }, 3000); // Check every 3 seconds
+            
+            // Store interval ID for cleanup
+            window.statusInterval = statusInterval;
+        }
+        
+        // New job button
+        newJobBtn.addEventListener('click', () => {
+            // Clear any ongoing status checks
+            if (window.statusInterval) {
+                clearInterval(window.statusInterval);
+                window.statusInterval = null;
+            }
+            
+            // Hide status section and show form
+            statusSection.classList.add('hidden');
+            extractionForm.parentElement.parentElement.classList.remove('hidden');
+            
+            // Reset form
+            extractionForm.reset();
+        });
+    </script>
+</body>
+</html> 
