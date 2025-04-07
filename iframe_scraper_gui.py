@@ -15,22 +15,257 @@ import threading
 import webbrowser
 from datetime import datetime
 import subprocess
-import importlib.util
+import time  # 导入time模块
 
-# 导入iframe_scraper.py中的函数
-script_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(script_dir)
-
-# 从iframe_scraper.py导入所需功能
-spec = importlib.util.spec_from_file_location("iframe_scraper", os.path.join(script_dir, "iframe_scraper.py"))
-scraper_module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(scraper_module)
-
-# 导入所需函数
-get_game_page_urls = scraper_module.get_game_page_urls
-get_iframe_src = scraper_module.get_iframe_src
-setup_logger = scraper_module.setup_logger
-save_results = scraper_module.save_results
+# 设置模块导入的错误处理
+try:
+    # 尝试直接导入内置模块
+    import urllib.request
+    import urllib.error
+    import urllib.parse
+    import re
+    import html
+    import logging
+    import argparse
+    from datetime import datetime
+    
+    # 导入iframe_scraper.py中的函数
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    sys.path.append(script_dir)
+    
+    # 判断程序是否被打包
+    if getattr(sys, 'frozen', False):
+        # 如果是打包后的程序，直接从包含的文件中导入
+        # PyInstaller打包后的文件位置
+        if hasattr(sys, '_MEIPASS'):
+            # 使用PyInstaller的临时目录
+            base_dir = sys._MEIPASS
+        else:
+            # 使用可执行文件所在目录
+            base_dir = os.path.dirname(sys.executable)
+        
+        # 查找iframe_scraper.py
+        iframe_scraper_path = os.path.join(base_dir, 'iframe_scraper.py')
+        
+        # 如果找不到，尝试在当前目录查找
+        if not os.path.exists(iframe_scraper_path):
+            iframe_scraper_path = os.path.join(script_dir, 'iframe_scraper.py')
+        
+        # 如果还是找不到，则尝试从资源中提取
+        if not os.path.exists(iframe_scraper_path):
+            # 将资源文件解压到临时位置
+            import tempfile
+            temp_dir = tempfile.gettempdir()
+            iframe_scraper_path = os.path.join(temp_dir, 'iframe_scraper.py')
+            
+            # 从打包的资源中提取iframe_scraper.py
+            try:
+                with open(os.path.join(base_dir, 'iframe_scraper.py'), 'r') as f:
+                    content = f.read()
+                with open(iframe_scraper_path, 'w') as f:
+                    f.write(content)
+            except Exception as e:
+                print(f"无法提取iframe_scraper.py: {e}")
+        
+        # 手动导入模块
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("iframe_scraper", iframe_scraper_path)
+        if spec:
+            scraper_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(scraper_module)
+        else:
+            # 如果仍然失败，实现基本的爬虫功能
+            class ScrapeModule:
+                def setup_logger(self):
+                    """设置日志记录器"""
+                    # 创建logs目录
+                    if not os.path.exists('logs'):
+                        os.makedirs('logs')
+                    
+                    # 获取当前时间作为日志文件名
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    log_file = f"logs/scraper_log_{timestamp}.txt"
+                    
+                    # 配置日志记录器
+                    logger = logging.getLogger('iframe_scraper')
+                    logger.setLevel(logging.DEBUG)
+                    
+                    # 创建文件处理器
+                    file_handler = logging.FileHandler(log_file, encoding='utf-8')
+                    file_handler.setLevel(logging.DEBUG)
+                    
+                    # 创建控制台处理器
+                    console_handler = logging.StreamHandler()
+                    console_handler.setLevel(logging.INFO)
+                    
+                    # 创建格式化器
+                    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+                    file_handler.setFormatter(formatter)
+                    console_handler.setFormatter(formatter)
+                    
+                    # 添加处理器到记录器
+                    logger.addHandler(file_handler)
+                    logger.addHandler(console_handler)
+                    
+                    return logger
+                
+                def get_game_page_urls(self, url, offset=0):
+                    """获取游戏页面的URL列表和标题"""
+                    if '?' in url:
+                        page_url = f"{url}&offset={offset}"
+                    else:
+                        page_url = f"{url}?offset={offset}"
+                    
+                    headers = {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                    }
+                    
+                    # 创建请求
+                    req = urllib.request.Request(page_url, headers=headers)
+                    
+                    try:
+                        # 发送请求获取网页内容
+                        with urllib.request.urlopen(req) as response:
+                            html_content = response.read().decode('utf-8')
+                            
+                        # 找到所有游戏单元格
+                        game_cells = re.findall(r'<div class="game_cell[^>]*>(.*?)</div>\s*</div>\s*</div>', html_content, re.DOTALL)
+                        
+                        games = []
+                        for cell in game_cells:
+                            # 从game_cell_data中提取游戏标题和链接
+                            cell_data = re.search(r'<div class="game_cell_data">(.*?)</div>', cell, re.DOTALL)
+                            if cell_data:
+                                cell_data_content = cell_data.group(1)
+                                
+                                # 提取游戏标题和链接
+                                title_match = re.search(r'<div class="game_title">\s*<a[^>]*href="([^"]*)"[^>]*>(.*?)</a>', cell_data_content, re.DOTALL)
+                                
+                                if title_match:
+                                    game_url = title_match.group(1)
+                                    game_title = re.sub(r'<[^>]*>', '', title_match.group(2)).strip()
+                                    
+                                    games.append({
+                                        'title': game_title,
+                                        'url': game_url
+                                    })
+                        
+                        # 检查是否有"下一页"按钮，判断是否还有更多游戏
+                        has_more = "Next page" in html_content or "下一页" in html_content
+                        
+                        return games, has_more
+                    
+                    except Exception as e:
+                        print(f"获取页面时出错: {e}")
+                        return [], False
+                
+                def get_iframe_src(self, game_url):
+                    """从游戏页面获取iframe的src属性"""
+                    headers = {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                    }
+                    
+                    # 创建请求
+                    req = urllib.request.Request(game_url, headers=headers)
+                    
+                    try:
+                        # 发送请求获取网页内容
+                        with urllib.request.urlopen(req) as response:
+                            html_content = response.read().decode('utf-8')
+                        
+                        # 情况1: 查找html_embed元素中的iframe标签的src属性
+                        html_embed_match = re.search(r'<div[^>]*id="html_embed[^"]*"[^>]*>(.*?)</div>', html_content, re.DOTALL)
+                        if html_embed_match:
+                            html_embed_content = html_embed_match.group(1)
+                            
+                            # 情况1.1: 直接从iframe标签中提取src属性
+                            iframe_tag = re.search(r'<iframe[^>]*src="([^"]*)"[^>]*>', html_embed_content)
+                            if iframe_tag:
+                                iframe_src = iframe_tag.group(1)
+                                return iframe_src
+                            
+                            # 情况1.2: 从data-iframe属性中提取src
+                            data_iframe = re.search(r'data-iframe="([^"]*)"', html_embed_content)
+                            if data_iframe:
+                                # 获取data-iframe属性值并解码HTML实体
+                                iframe_data_str = data_iframe.group(1)
+                                iframe_data_str = html.unescape(iframe_data_str)
+                                
+                                # 从iframe标签中提取src属性
+                                iframe_src_match = re.search(r'src="([^"]*)"', iframe_data_str)
+                                if iframe_src_match:
+                                    iframe_src = iframe_src_match.group(1)
+                                    return iframe_src
+                        
+                        # 情况2: 如果在html_embed中找不到，则查找iframe_placeholder中的data-iframe属性
+                        iframe_placeholder = re.search(r'<div[^>]*class="iframe_placeholder"[^>]*data-iframe="([^"]*)"', html_content, re.DOTALL)
+                        if iframe_placeholder:
+                            # 获取data-iframe属性值并解码HTML实体
+                            iframe_data_str = iframe_placeholder.group(1)
+                            iframe_data_str = html.unescape(iframe_data_str)
+                            
+                            # 从iframe标签中提取src属性
+                            iframe_src_match = re.search(r'src="([^"]*)"', iframe_data_str)
+                            if iframe_src_match:
+                                iframe_src = iframe_src_match.group(1)
+                                return iframe_src
+                        
+                        # 如果都没找到，返回None
+                        return None
+                    
+                    except Exception as e:
+                        print(f"获取游戏页面时出错: {e}")
+                        return None
+                
+                def save_results(self, results, output_file):
+                    """保存结果到JSON文件"""
+                    # 确保目录存在
+                    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+                    
+                    # 如果没有找到任何游戏，创建一个空数组的JSON文件
+                    if not results:
+                        results = []
+                    
+                    # 确保结果是UTF-8格式，不使用ensure_ascii
+                    with open(output_file, 'w', encoding='utf-8') as f:
+                        json_str = json.dumps(results, ensure_ascii=False, indent=2)
+                        f.write(json_str)
+            
+            scraper_module = ScrapeModule()
+    else:
+        # 如果不是打包程序，使用importlib加载
+        import importlib.util
+        iframe_scraper_path = os.path.join(script_dir, 'iframe_scraper.py')
+        spec = importlib.util.spec_from_file_location("iframe_scraper", iframe_scraper_path)
+        scraper_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(scraper_module)
+    
+    # 导入所需函数
+    get_game_page_urls = scraper_module.get_game_page_urls
+    get_iframe_src = scraper_module.get_iframe_src
+    setup_logger = scraper_module.setup_logger
+    save_results = scraper_module.save_results
+    
+except Exception as import_error:
+    # 显示错误信息
+    import traceback
+    error_details = traceback.format_exc()
+    print(f"导入模块时出错: {import_error}")
+    print(error_details)
+    
+    # 使用messagebox显示错误
+    try:
+        root = tk.Tk()
+        root.withdraw()  # 隐藏主窗口
+        messagebox.showerror("导入错误", 
+                            f"无法导入所需模块:\n{import_error}\n\n"
+                            "请确保所有依赖模块都已安装，且iframe_scraper.py文件存在。")
+        root.destroy()
+    except:
+        pass
+    
+    # 退出程序
+    sys.exit(1)
 
 # 设置日志记录器
 logger = setup_logger()
@@ -527,5 +762,4 @@ def main():
     root.mainloop()
 
 if __name__ == "__main__":
-    import time  # 用于延迟
     main() 

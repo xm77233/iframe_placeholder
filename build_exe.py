@@ -77,14 +77,40 @@ def main():
         else:
             icon_option = ["--icon", icon_file]
     
+    # 创建临时的hooks文件，确保urllib.request模块被正确包含
+    hooks_dir = "hooks"
+    if not os.path.exists(hooks_dir):
+        os.makedirs(hooks_dir)
+    
+    with open(os.path.join(hooks_dir, "hook-urllib.py"), "w") as f:
+        f.write("""
+# 确保urllib的所有子模块都被包含
+hiddenimports = [
+    'urllib.request',
+    'urllib.error',
+    'urllib.parse',
+    'urllib.robotparser'
+]
+""")
+    
     # 构建命令
     cmd = [
         "pyinstaller",
         "--noconfirm",
         "--onefile",
         "--windowed",
+        f"--additional-hooks-dir={hooks_dir}",
         "--name", "itch.io游戏iframe提取器",
         "--add-data", f"iframe_scraper.py{os.pathsep}.",
+        "--hidden-import", "urllib.request",
+        "--hidden-import", "urllib.error",
+        "--hidden-import", "urllib.parse",
+        "--hidden-import", "html.parser",
+        "--hidden-import", "json",
+        "--hidden-import", "os",
+        "--hidden-import", "time",
+        "--hidden-import", "re",
+        "--hidden-import", "logging",
     ]
     
     # 添加图标选项
@@ -98,6 +124,11 @@ def main():
     
     try:
         subprocess.check_call(cmd)
+        
+        # 清理临时hooks目录
+        if os.path.exists(hooks_dir):
+            shutil.rmtree(hooks_dir)
+        
         print("\n构建成功! √")
         
         # 获取生成的可执行文件路径
