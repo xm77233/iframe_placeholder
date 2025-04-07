@@ -7,6 +7,12 @@ import webbrowser
 from datetime import datetime
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
+import urllib.request
+import urllib.error
+import re
+import html
+import random
+import traceback
 
 # 导入iframe_scraper模块的核心功能
 # 尝试多种方式导入FastItchIoScraper
@@ -34,14 +40,30 @@ if not success:
     except ImportError:
         print(f"无法从 {current_dir} 导入FastItchIoScraper")
 
-# 方式3：创建一个内部类以防找不到原始类
+# 方式3：创建一个简化版的爬虫实现
 if not success:
     try:
-        print("使用内置爬虫类作为后备...")
+        print("使用自定义爬虫类作为后备...")
         
-        # 这是一个简化版的FastItchIoScraper类，作为备用
+        # 创建文件夹
+        RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
+        LOGS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+        DEBUG_HTML_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug_html")
+        
+        for directory in [RESULTS_DIR, LOGS_DIR, DEBUG_HTML_DIR]:
+            if not os.path.exists(directory):
+                os.makedirs(directory)
+                
+        # 用户代理列表
+        USER_AGENTS = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Safari/605.1.15',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36'
+        ]
+        
         class FastItchIoScraper:
-            """简化版itch.io游戏iframe源爬取器"""
+            """自定义itch.io游戏iframe源爬取器"""
             
             def __init__(self, max_games=5, start_offset=0, delay=0.5):
                 """
@@ -59,60 +81,364 @@ if not success:
                 self.processed_count = 0
                 self.successful_count = 0
                 self.start_time = datetime.now()
+                self.debug_save_html = True  # 保存HTML用于调试
                 
-                # 创建文件夹
-                for directory in [RESULTS_DIR, LOGS_DIR, DEBUG_HTML_DIR]:
-                    if not os.path.exists(directory):
-                        os.makedirs(directory)
+                # 创建日志文件
+                self.log_file = os.path.join(LOGS_DIR, f"scraper_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt")
+                with open(self.log_file, 'w', encoding='utf-8') as f:
+                    f.write(f"爬虫日志 - 开始时间: {self.start_time}\n")
+                    f.write(f"参数: max_games={max_games}, start_offset={start_offset}, delay={delay}\n")
+                    f.write("="*50 + "\n")
+            
+            def log(self, message):
+                """写入日志"""
+                timestamp = datetime.now().strftime("%H:%M:%S")
+                log_message = f"[{timestamp}] {message}"
+                print(log_message)
+                try:
+                    with open(self.log_file, 'a', encoding='utf-8') as f:
+                        f.write(log_message + "\n")
+                except Exception as e:
+                    print(f"写入日志失败: {e}")
+            
+            def get_random_user_agent(self):
+                """随机获取一个User-Agent"""
+                return random.choice(USER_AGENTS)
+            
+            def fetch_url(self, url):
+                """获取URL内容，增加重试机制"""
+                max_retries = 3
+                retry_count = 0
+                
+                while retry_count < max_retries:
+                    try:
+                        headers = {
+                            'User-Agent': self.get_random_user_agent(),
+                            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                            'Accept-Language': 'en-US,en;q=0.5',
+                            'Connection': 'keep-alive',
+                            'Upgrade-Insecure-Requests': '1',
+                            'Cache-Control': 'max-age=0'
+                        }
+                        
+                        self.log(f"获取URL: {url} (尝试 {retry_count+1}/{max_retries})")
+                        
+                        req = urllib.request.Request(url, headers=headers)
+                        with urllib.request.urlopen(req, timeout=15) as response:
+                            html_content = response.read().decode('utf-8')
+                            
+                            # 保存HTML用于调试
+                            if self.debug_save_html:
+                                try:
+                                    # 从URL中提取游戏名称或页面类型
+                                    filename = url.split('/')[-1] if '/' in url else 'page'
+                                    if '?' in filename:
+                                        filename = filename.split('?')[0]
+                                    if not filename:
+                                        filename = 'index'
+                                    
+                                    # 添加时间戳避免覆盖
+                                    timestamp = datetime.now().strftime("%H%M%S")
+                                    debug_file = os.path.join(DEBUG_HTML_DIR, f"{filename}_{timestamp}.html")
+                                    
+                                    with open(debug_file, 'w', encoding='utf-8') as f:
+                                        f.write(html_content)
+                                        
+                                    self.log(f"保存HTML到 {debug_file}")
+                                except Exception as e:
+                                    self.log(f"保存HTML失败: {e}")
+                            
+                            return html_content
+                    except Exception as e:
+                        self.log(f"获取URL {url} 失败: {str(e)}")
+                        error_details = traceback.format_exc()
+                        self.log(f"详细错误: {error_details}")
+                        
+                        retry_count += 1
+                        if retry_count < max_retries:
+                            wait_time = retry_count * 2
+                            self.log(f"等待 {wait_time} 秒后重试...")
+                            time.sleep(wait_time)
+                        else:
+                            self.log(f"达到最大重试次数，放弃获取URL: {url}")
+                
+                return ""
+            
+            def get_game_page_urls(self):
+                """获取游戏页面URL列表"""
+                offset = self.start_offset
+                games = []
+                
+                self.log(f"开始获取游戏列表 - 最大数量: {self.max_games}, 偏移量: {offset}")
+                
+                # 尝试不同的页面类型
+                page_types = [
+                    (f"https://itch.io/games/free/platform-web?offset={offset}", "普通自由网页游戏"),
+                    (f"https://itch.io/games/top-rated/free/platform-web?offset={offset}", "排名最高网页游戏"),
+                    (f"https://itch.io/games/genre-action/free/platform-web?offset={offset}", "动作类游戏"),
+                    (f"https://itch.io/games/genre-puzzle/free/platform-web?offset={offset}", "解谜类游戏")
+                ]
+                
+                # 从列表中尝试不同的页面类型，直到获取足够的游戏
+                for url_template, description in page_types:
+                    if len(games) >= self.max_games:
+                        break
+                        
+                    self.log(f"尝试从 {description} 列表获取游戏 (URL: {url_template})")
+                    
+                    try:
+                        html_content = self.fetch_url(url_template)
+                        if not html_content:
+                            self.log(f"无法获取 {description} 列表HTML内容")
+                            continue
+                        
+                        self.log(f"成功获取 {description} 列表HTML内容，长度: {len(html_content)} 字符")
+                        
+                        # 使用正则表达式查找游戏信息
+                        # 查找游戏卡片
+                        game_cells = re.finditer(r'<div class="game_cell"[^>]*>.*?<a\s+class="game_link"\s+href="([^"]+)"[^>]*>.*?<div class="game_title"[^>]*>(.*?)</div>', html_content, re.DOTALL)
+                        
+                        for match in game_cells:
+                            if len(games) >= self.max_games:
+                                break
+                                
+                            game_url = match.group(1)
+                            game_title = re.sub(r'<[^>]+>', '', match.group(2)).strip()
+                            
+                            # 确保URL是绝对路径
+                            if not game_url.startswith('http'):
+                                game_url = 'https://itch.io' + game_url
+                            
+                            games.append({
+                                'url': game_url,
+                                'title': game_title
+                            })
+                            
+                            self.log(f"找到游戏: {game_title} - {game_url}")
+                        
+                        # 作为备选方案，寻找任何游戏链接
+                        if len(games) == 0:
+                            self.log("未找到游戏卡片，尝试查找任何游戏链接...")
+                            game_links = re.finditer(r'<a[^>]*href="(https://[^"]+\.itch\.io/[^"]+)"[^>]*>(.*?)</a>', html_content, re.DOTALL)
+                            
+                            for match in game_links:
+                                if len(games) >= self.max_games:
+                                    break
+                                    
+                                game_url = match.group(1)
+                                game_title_html = match.group(2)
+                                
+                                # 清理HTML标签
+                                game_title = re.sub(r'<[^>]+>', '', game_title_html).strip()
+                                if not game_title:
+                                    game_title = f"游戏 {len(games) + 1}"
+                                
+                                # 避免重复
+                                if not any(g['url'] == game_url for g in games):
+                                    games.append({
+                                        'url': game_url,
+                                        'title': game_title
+                                    })
+                                    self.log(f"找到游戏链接: {game_title} - {game_url}")
+                        
+                        if games:
+                            # 如果这个来源找到了游戏，就不再尝试其他来源
+                            self.log(f"从 {description} 来源找到 {len(games)} 个游戏，停止搜索其他来源")
+                            break
+                    except Exception as e:
+                        self.log(f"获取 {description} 列表失败: {e}")
+                        error_details = traceback.format_exc()
+                        self.log(f"详细错误: {error_details}")
+                
+                self.log(f"总共提取 {len(games)} 个游戏信息")
+                return games
+            
+            def get_iframe_src(self, game_page_html, game_url):
+                """从游戏页面中提取iframe源"""
+                iframe_src = None
+                extraction_method = "unknown"
+                
+                self.log(f"开始提取iframe源 - {game_url}")
+                
+                # 方法1: 检查html_embed区域中的iframe标签
+                if not iframe_src:
+                    try:
+                        self.log("尝试方法1: html_embed > iframe")
+                        match = re.search(r'<div[^>]*id=["\'](html_embed_content|html_embed)["\']\s*[^>]*>[\s\S]*?<iframe[^>]*src=["\'](.*?)["\']', game_page_html, re.DOTALL)
+                        if match:
+                            iframe_src = html.unescape(match.group(2))
+                            extraction_method = "html_embed_iframe"
+                            self.log(f"方法1成功: {iframe_src}")
+                        else:
+                            self.log("方法1未找到匹配")
+                    except Exception as e:
+                        self.log(f"方法1出错: {e}")
+                
+                # 方法2: 检查data-iframe属性
+                if not iframe_src:
+                    try:
+                        self.log("尝试方法2: data-iframe属性")
+                        match = re.search(r'<div[^>]*data-iframe=["\'](.*?)["\']', game_page_html, re.DOTALL)
+                        if match:
+                            iframe_data = html.unescape(match.group(1))
+                            # 从iframe HTML中提取src
+                            src_match = re.search(r'<iframe[^>]*src=["\'](.*?)["\']', iframe_data, re.DOTALL)
+                            if src_match:
+                                iframe_src = html.unescape(src_match.group(1))
+                                extraction_method = "data_iframe"
+                                self.log(f"方法2成功: {iframe_src}")
+                            else:
+                                self.log("方法2找到data-iframe但无法提取src")
+                        else:
+                            self.log("方法2未找到匹配")
+                    except Exception as e:
+                        self.log(f"方法2出错: {e}")
+                
+                # 方法3: 直接搜索所有iframe标签
+                if not iframe_src:
+                    try:
+                        self.log("尝试方法3: 搜索所有iframe标签")
+                        matches = re.finditer(r'<iframe[^>]*src=["\'](.*?)["\'][^>]*>', game_page_html, re.DOTALL)
+                        for match in matches:
+                            potential_src = html.unescape(match.group(1))
+                            # 过滤掉不相关的iframe
+                            if 'itch.io/embed' in potential_src or 'itch.io/embed-upload' in potential_src:
+                                iframe_src = potential_src
+                                extraction_method = "any_iframe"
+                                self.log(f"方法3成功: {iframe_src}")
+                                break
+                        
+                        if not iframe_src:
+                            self.log("方法3未找到匹配")
+                    except Exception as e:
+                        self.log(f"方法3出错: {e}")
+                
+                # 方法4: 检查游戏下载或播放按钮链接
+                if not iframe_src:
+                    try:
+                        self.log("尝试方法4: 游戏下载或播放按钮")
+                        match = re.search(r'<a[^>]*class=["\'](button play_game|iframe_placeholder)["\'][^>]*href=["\'](.*?)["\']', game_page_html, re.DOTALL)
+                        if match:
+                            play_url = html.unescape(match.group(2))
+                            # 判断是否为内嵌iframe的URL
+                            if 'itch.io/embed' in play_url or 'itch.io/embed-upload' in play_url:
+                                iframe_src = play_url
+                                extraction_method = "play_button"
+                                self.log(f"方法4成功: {iframe_src}")
+                            else:
+                                self.log(f"方法4找到按钮但链接不是iframe: {play_url}")
+                        else:
+                            self.log("方法4未找到匹配")
+                    except Exception as e:
+                        self.log(f"方法4出错: {e}")
+                
+                # 方法5: 检查JavaScript中的iframe URL
+                if not iframe_src:
+                    try:
+                        self.log("尝试方法5: JavaScript中的iframe URL")
+                        match = re.search(r'iframe_url\s*=\s*["\']([^"\']*)["\']', game_page_html, re.DOTALL)
+                        if match:
+                            iframe_src = html.unescape(match.group(1))
+                            extraction_method = "js_iframe_url"
+                            self.log(f"方法5成功: {iframe_src}")
+                        else:
+                            self.log("方法5未找到匹配")
+                    except Exception as e:
+                        self.log(f"方法5出错: {e}")
+                
+                # 方法6: 检查嵌入代码中的iframe
+                if not iframe_src:
+                    try:
+                        self.log("尝试方法6: 嵌入代码中的iframe")
+                        match = re.search(r'<textarea[^>]*class=["\']embed_code["\'][^>]*>(.*?)</textarea>', game_page_html, re.DOTALL)
+                        if match:
+                            embed_code = html.unescape(match.group(1))
+                            src_match = re.search(r'src=["\'](.*?)["\']', embed_code, re.DOTALL)
+                            if src_match:
+                                iframe_src = html.unescape(src_match.group(1))
+                                extraction_method = "embed_code"
+                                self.log(f"方法6成功: {iframe_src}")
+                            else:
+                                self.log("方法6找到嵌入代码但无法提取src")
+                        else:
+                            self.log("方法6未找到匹配")
+                    except Exception as e:
+                        self.log(f"方法6出错: {e}")
+                
+                if iframe_src:
+                    # 确保URL是绝对路径
+                    if not iframe_src.startswith('http'):
+                        iframe_src = 'https:' + iframe_src if iframe_src.startswith('//') else 'https://itch.io' + iframe_src
+                    
+                    self.log(f"成功提取iframe源: {iframe_src} (方法: {extraction_method})")
+                    return iframe_src, extraction_method
+                else:
+                    self.log("所有方法都失败，未找到iframe源")
+                    return None, "failed"
+            
+            def process_game(self, game):
+                """处理单个游戏，提取iframe源"""
+                self.processed_count += 1
+                
+                game_url = game['url']
+                game_title = game['title']
+                
+                self.log(f"处理游戏 {self.processed_count}/{self.max_games}: {game_title}")
+                
+                # 获取游戏页面内容
+                game_page_html = self.fetch_url(game_url)
+                if not game_page_html:
+                    self.log(f"无法获取游戏页面: {game_url}")
+                    return None
+                
+                # 提取iframe源
+                iframe_src, extraction_method = self.get_iframe_src(game_page_html, game_url)
+                
+                if iframe_src:
+                    self.successful_count += 1
+                    result = {
+                        'title': game_title,
+                        'url': game_url,
+                        'iframe_src': iframe_src,
+                        'extracted_method': extraction_method
+                    }
+                    self.log(f"成功提取: {game_title} - {iframe_src}")
+                    return result
+                else:
+                    self.log(f"无法提取iframe源: {game_title}")
+                    return None
             
             def scrape(self):
                 """执行爬取过程"""
-                print(f"开始爬取 - 最大游戏数: {self.max_games}, 起始偏移: {self.start_offset}")
+                self.log(f"开始爬取 - 最大游戏数: {self.max_games}, 起始偏移: {self.start_offset}")
                 
-                # 创建一些示例游戏作为测试
-                sample_games = [
-                    {
-                        "title": "Polytrack",
-                        "url": "https://dddoooccc.itch.io/polytrack",
-                        "iframe_src": "https://itch.io/embed-upload/8357347?color=444444",
-                        "extracted_method": "embedded_sample"
-                    },
-                    {
-                        "title": "Mr. Magpie's Harmless Card Game",
-                        "url": "https://magpiecollective.itch.io/mr-magpies-harmless-card-game",
-                        "iframe_src": "https://itch.io/embed-upload/8410214?color=222222",
-                        "extracted_method": "embedded_sample"
-                    },
-                    {
-                        "title": "Narrow One",
-                        "url": "https://krajzeg.itch.io/narrow-one",
-                        "iframe_src": "https://itch.io/embed-upload/2034417?color=222336",
-                        "extracted_method": "embedded_sample"
-                    },
-                    {
-                        "title": "Sort the Court!",
-                        "url": "https://graebor.itch.io/sort-the-court",
-                        "iframe_src": "https://itch.io/embed/42665?dark=true",
-                        "extracted_method": "embedded_sample"
-                    },
-                    {
-                        "title": "Unleashed",
-                        "url": "https://apoc.itch.io/unleashed",
-                        "iframe_src": "https://itch.io/embed-upload/1694088?color=333333",
-                        "extracted_method": "embedded_sample"
+                # 获取游戏页面URL列表
+                games = self.get_game_page_urls()
+                
+                if not games:
+                    self.log("未找到任何游戏")
+                    end_time = datetime.now()
+                    elapsed_time = (end_time - self.start_time).total_seconds()
+                    stats = {
+                        "total_processed": 0,
+                        "successful_extractions": 0,
+                        "elapsed_seconds": elapsed_time,
+                        "timestamp": end_time.isoformat(),
+                        "start_time": self.start_time.isoformat(),
+                        "end_time": end_time.isoformat()
                     }
-                ]
+                    return [], stats
                 
-                # 获取请求的游戏数量
-                num_games = min(self.max_games, len(sample_games))
-                self.results = sample_games[:num_games]
+                self.log(f"开始处理 {len(games)} 个游戏")
                 
-                # 模拟处理
-                for i in range(num_games):
-                    self.processed_count += 1
-                    self.successful_count += 1
-                    if i > 0:  # 模拟延迟
-                        time.sleep(self.delay)
+                # 处理每个游戏
+                for i, game in enumerate(games):
+                    if i > 0:
+                        time.sleep(self.delay)  # 请求间隔
+                    
+                    result = self.process_game(game)
+                    if result:
+                        self.results.append(result)
                 
                 # 生成统计信息
                 end_time = datetime.now()
@@ -123,17 +449,17 @@ if not success:
                     "elapsed_seconds": elapsed_time,
                     "timestamp": end_time.isoformat(),
                     "start_time": self.start_time.isoformat(),
-                    "end_time": end_time.isoformat(),
-                    "note": "使用内置样本数据，因为无法导入真实爬虫"
+                    "end_time": end_time.isoformat()
                 }
                 
-                print(f"完成 - 处理了 {self.processed_count} 个游戏, 成功 {self.successful_count} 个")
+                self.log(f"爬取完成 - 处理游戏: {self.processed_count}, 成功: {self.successful_count}, 耗时: {elapsed_time:.2f}秒")
                 return self.results, stats
         
         success = True
-        print("成功创建内置FastItchIoScraper类作为备用")
+        print("成功创建自定义FastItchIoScraper类")
     except Exception as e:
-        print(f"创建内置爬虫类失败: {e}")
+        print(f"创建自定义爬虫类失败: {e}")
+        print(traceback.format_exc())
 
 # 如果所有导入方法都失败，则终止程序
 if not success:
@@ -405,7 +731,6 @@ class IframeExtractorGUI:
             self.root.after(0, lambda: self.status_var.set(f"完成 (耗时: {elapsed_time:.2f}秒)"))
             
         except Exception as e:
-            import traceback
             error_trace = traceback.format_exc()
             self.log(f"错误: {str(e)}")
             self.log(f"详细错误: {error_trace}")
