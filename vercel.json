@@ -19,6 +19,14 @@
     "env": {
         "VERCEL": "true",
         "PYTHONUNBUFFERED": "1",
-        "USE_REAL_SCRAPER": "true"
+        "USE_REAL_SCRAPER": "true",
+        "FORCE_REAL_SCRAPER": "true",
+        "DEBUG_MODE": "true"
+    },
+    "functions": {
+        "server.py": {
+            "memory": 1024,
+            "maxDuration": 10
+        }
     }
 } 

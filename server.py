@@ -222,53 +222,95 @@ class FastItchIoScraper:
         print(f"------------------------------")
         print(f"开始获取游戏列表 - 最大数量: {max_to_fetch}, 偏移量: {offset}")
         
-        url = f"https://itch.io/games/free/platform-web?offset={offset}"
-        print(f"请求游戏列表页面: {url}")
+        # 尝试不同的页面类型
+        page_types = [
+            # 格式: (URL模板, 描述)
+            (f"https://itch.io/games/free/platform-web?offset={offset}", "普通自由网页游戏"),
+            (f"https://itch.io/games/top-rated/free/platform-web?offset={offset}", "排名最高网页游戏"),
+            (f"https://itch.io/games/genre-action/free/platform-web?offset={offset}", "动作类游戏"),
+            (f"https://itch.io/games/genre-puzzle/free/platform-web?offset={offset}", "解谜类游戏")
+        ]
         
-        try:
-            html_content = self.fetch_url(url)
-            if not html_content:
-                print("无法获取游戏列表HTML内容")
-                return []
-            
-            print(f"成功获取游戏列表HTML内容，长度: {len(html_content)} 字符")
-            
-            # 保存列表页HTML用于调试
-            if self.debug_save_html:
-                try:
-                    debug_file = os.path.join(DEBUG_HTML_DIR, f"game_list_offset_{offset}.html")
-                    with open(debug_file, 'w', encoding='utf-8') as f:
-                        f.write(html_content)
-                    print(f"已保存游戏列表HTML到 {debug_file}")
-                except Exception as e:
-                    print(f"保存游戏列表HTML失败: {e}")
-            
-            # 提取游戏标题和链接 - 使用更可靠的正则表达式
-            pattern = r'<a\s+class="game_link"\s+href="(https://[^"]+\.itch\.io/[^"]+)"[^>]*>[\s\S]*?<div\s+class="game_title">([\s\S]*?)</div>'
-            matches = re.findall(pattern, html_content, re.DOTALL)
-            
-            print(f"找到 {len(matches)} 个游戏匹配项")
-            
-            for game_url, game_title in matches[:max_to_fetch]:
-                clean_title = html.unescape(game_title.strip())
-                # 清理标题中的HTML标签
-                clean_title = re.sub(r'<[^>]+>', '', clean_title)
+        # 从列表中尝试不同的页面类型，直到获取足够的游戏
+        for url_template, description in page_types:
+            if len(games) >= max_to_fetch:
+                break
                 
-                games.append((game_url, clean_title))
-                self.processed_count += 1
+            print(f"尝试从 {description} 列表获取游戏 (URL: {url_template})")
+            
+            try:
+                html_content = self.fetch_url(url_template)
+                if not html_content:
+                    print(f"无法获取 {description} 列表HTML内容")
+                    continue
                 
-                print(f"添加游戏: {clean_title} ({game_url})")
+                print(f"成功获取 {description} 列表HTML内容，长度: {len(html_content)} 字符")
                 
-                if len(games) >= max_to_fetch:
-                    break
+                # 保存列表页HTML用于调试
+                if self.debug_save_html:
+                    try:
+                        debug_file = os.path.join(DEBUG_HTML_DIR, f"game_list_{description.replace(' ', '_')}_offset_{offset}.html")
+                        with open(debug_file, 'w', encoding='utf-8') as f:
+                            f.write(html_content)
+                        print(f"已保存游戏列表HTML到 {debug_file}")
+                    except Exception as e:
+                        print(f"保存游戏列表HTML失败: {e}")
+                
+                # 使用三种不同的正则表达式模式尝试提取游戏链接
+                extraction_patterns = [
+                    # 标准游戏链接格式
+                    (r'<a\s+class="game_link"\s+href="(https://[^"]+\.itch\.io/[^"]+)"[^>]*>[\s\S]*?<div\s+class="game_title">([\s\S]*?)</div>', "标准模式"),
+                    # 备用格式 - 链接后跟标题
+                    (r'<a\s+href="(https://[^"]+\.itch\.io/[^"]+)"[^>]*class="[^"]*game[^"]*"[^>]*>[\s\S]*?<div\s+class="[^"]*title[^"]*">([\s\S]*?)</div>', "备用模式"),
+                    # 最宽松模式 - 任何itch.io链接
+                    (r'<a\s+href="(https://[^"]+\.itch\.io/[^"]+)"[^>]*>([\s\S]*?)</a>', "宽松模式")
+                ]
+                
+                for pattern, pattern_name in extraction_patterns:
+                    if len(games) >= max_to_fetch:
+                        break
+                        
+                    matches = re.findall(pattern, html_content, re.DOTALL)
+                    print(f"使用{pattern_name}找到 {len(matches)} 个游戏匹配项")
                     
-            print(f"成功提取 {len(games)} 个游戏信息")
-            
-        except Exception as e:
-            print(f"获取游戏列表失败: {e}")
-            import traceback
-            print(f"详细错误: {traceback.format_exc()}")
+                    if matches:
+                        # 处理找到的匹配项
+                        for game_url, game_title in matches:
+                            if len(games) >= max_to_fetch:
+                                break
+                                
+                            # 检查URL格式
+                            if not game_url.startswith("https://") or not ".itch.io/" in game_url:
+                                continue
+                                
+                            # 清理标题
+                            clean_title = html.unescape(game_title.strip())
+                            clean_title = re.sub(r'<[^>]+>', '', clean_title)
+                            clean_title = clean_title.strip()
+                            
+                            # 跳过没有标题的游戏
+                            if not clean_title:
+                                continue
+                                
+                            # 跳过重复的游戏URL
+                            if any(existing_url == game_url for existing_url, _ in games):
+                                continue
+                            
+                            games.append((game_url, clean_title))
+                            self.processed_count += 1
+                            
+                            print(f"添加游戏: {clean_title} ({game_url})")
+                
+                if games:
+                    # 如果这个来源找到了游戏，就不再尝试其他来源
+                    print(f"从 {description} 来源找到 {len(games)} 个游戏，停止搜索其他来源")
+                    break
+            except Exception as e:
+                print(f"获取 {description} 列表失败: {e}")
+                import traceback
+                print(f"详细错误: {traceback.format_exc()}")
         
+        print(f"总共提取 {len(games)} 个游戏信息")
         print(f"------------------------------")
         return games
     
@@ -491,6 +533,10 @@ class FastItchIoScraper:
         print(f"开始时间: {self.start_time.isoformat()}")
         print(f"==========================================")
         
+        # 检查是否是单游戏模式（爬取单个游戏可以优化性能）
+        single_game_mode = self.max_games == 1
+        print(f"单游戏模式: {single_game_mode}")
+        
         # 获取游戏页面URL
         game_urls = self.get_game_page_urls()
         
@@ -504,18 +550,29 @@ class FastItchIoScraper:
                 "error": "No games found in the list page"
             }
         
+        # 如果是单游戏模式，设置更激进的超时保护
+        if single_game_mode:
+            max_time_allowed = 8  # 单游戏模式下只给8秒时间
+        else:
+            max_time_allowed = 50  # 多游戏模式下给50秒时间
+        
         # 处理每个游戏
         for i, (game_url, game_title) in enumerate(game_urls):
             print(f"\n处理游戏 {i+1}/{len(game_urls)}: {game_title}")
             
-            # 添加延迟
-            if i > 0 and self.delay > 0:
-                print(f"等待 {self.delay} 秒...")
-                time.sleep(self.delay)
+            # 添加延迟（但单游戏模式下减少延迟）
+            if i > 0:
+                if single_game_mode:
+                    delay_time = min(self.delay, 0.5)  # 单游戏模式下最多延迟0.5秒
+                else:
+                    delay_time = self.delay
+                    
+                print(f"等待 {delay_time} 秒...")
+                time.sleep(delay_time)
                 
             # 检查是否超时
             elapsed = (datetime.now() - self.start_time).total_seconds()
-            if elapsed > 55:  # 设置55秒的安全阈值，确保在Vercel 60秒限制前返回
+            if elapsed > max_time_allowed:
                 print(f"接近时间限制 ({elapsed:.2f}秒)，已处理 {i} 个游戏，提前结束")
                 break
                 
@@ -524,8 +581,19 @@ class FastItchIoScraper:
             if result:
                 self.results.append(result)
                 print(f"成功添加结果 - {game_title}")
+                
+                # 如果是单游戏模式并且已获取一个结果，直接结束
+                if single_game_mode and len(self.results) > 0:
+                    print("单游戏模式：已获取结果，提前结束爬取")
+                    break
             else:
                 print(f"未能获取结果 - {game_title}")
+            
+            # 再次检查是否超时（处理游戏可能耗时很长）
+            elapsed = (datetime.now() - self.start_time).total_seconds()
+            if elapsed > max_time_allowed:
+                print(f"处理游戏后超过时间限制 ({elapsed:.2f}秒)，提前结束")
+                break
         
         # 生成统计信息
         end_time = datetime.now()
@@ -536,7 +604,8 @@ class FastItchIoScraper:
             "elapsed_seconds": elapsed_time,
             "timestamp": end_time.isoformat(),
             "start_time": self.start_time.isoformat(),
-            "end_time": end_time.isoformat()
+            "end_time": end_time.isoformat(),
+            "single_game_mode": single_game_mode
         }
         
         print(f"==========================================")
@@ -664,13 +733,13 @@ def mock_process_job(job_id, params):
         result_file = os.path.join(RESULTS_DIR, f"job_{job_id}.json")
         
         # 限制最大游戏数量，避免超时
-        max_games = min(params.get('max_games', 5), 10)  # 减少默认值和上限，避免超时
+        max_games = min(params.get('max_games', 1), 5)  # 默认只爬取1个游戏，最多5个
         offset = params.get('offset', 0)
-        delay = min(max(params.get('delay', 1.0), 1.0), 3.0)  # 确保延迟至少1秒，最多3秒
+        delay = min(max(params.get('delay', 1.0), 1.0), 2.0)  # 确保延迟在1-2秒之间
         
-        # 强制使用真实爬虫，除非明确禁用（调试目的）
-        use_real_scraper = os.environ.get('USE_REAL_SCRAPER', 'true').lower() != 'false'
-        print(f"是否使用真实爬虫: {use_real_scraper}")
+        # 强制使用真实爬虫，禁用回退机制
+        use_real_scraper = True
+        print(f"强制使用真实爬虫模式 (禁用回退)")
         
         # 创建独立的日志文件
         log_file_path = os.path.join(LOGS_DIR, f"job_{job_id}.log")
@@ -681,183 +750,122 @@ def mock_process_job(job_id, params):
             log_file.write(f"===== 任务开始: {job_id} =====\n")
             log_file.write(f"时间: {datetime.now().isoformat()}\n")
             log_file.write(f"参数: max_games={max_games}, offset={offset}, delay={delay}\n")
-            log_file.write(f"环境变量: USE_REAL_SCRAPER={os.environ.get('USE_REAL_SCRAPER', 'not_set')}\n")
+            log_file.write(f"环境变量: USE_REAL_SCRAPER=true (强制启用)\n")
             log_file.write(f"运行环境: {'Vercel' if 'VERCEL' in os.environ else '本地'}\n")
+            log_file.write(f"Vercel环境变量检查:\n")
+            for key, value in os.environ.items():
+                if key.startswith('VERCEL') or key == 'USE_REAL_SCRAPER' or key == 'PYTHONUNBUFFERED':
+                    log_file.write(f"  {key}={value}\n")
             log_file.flush()
             
-            # 使用真实爬虫进行爬取
-            if use_real_scraper:
-                log_file.write(f"=== 使用真实爬虫进行爬取 ===\n")
-                log_file.flush()
-                print("=== 使用真实爬虫进行爬取 ===")
-                print(f"最大游戏数: {max_games}, 偏移量: {offset}, 延迟: {delay}秒")
-                
-                try:
-                    # 创建爬虫实例
-                    scraper = FastItchIoScraper(max_games=max_games, start_offset=offset, delay=delay)
-                    
-                    # 执行爬取
-                    results, stats = scraper.scrape()
-                    
-                    # 更新状态并输出统计信息
-                    log_file.write(f"爬取完成: 处理了 {stats['total_processed']} 个游戏，成功提取 {stats['successful_extractions']} 个iframe源\n")
-                    log_file.write(f"耗时: {stats['elapsed_seconds']:.2f}秒\n")
-                    log_file.flush()
-                    
-                    update_job(job_id, {
-                        'processed': stats['total_processed'],
-                        'successful': stats['successful_extractions']
-                    })
-                    
-                    # 详细记录结果
-                    if results:
-                        log_file.write(f"成功获取 {len(results)} 个结果\n")
-                        for i, result in enumerate(results):
-                            log_file.write(f"结果 {i+1}: {result.get('title')} - {result.get('iframe_src')}\n")
-                        log_file.flush()
-                        
-                        # 确保每个结果都有iframe_src，否则跳过
-                        valid_results = []
-                        for result in results:
-                            if result.get('iframe_src'):
-                                valid_results.append(result)
-                            else:
-                                log_file.write(f"警告: 跳过没有iframe_src的结果: {result.get('title')}\n")
-                        
-                        if valid_results:
-                            sample_results = valid_results
-                            log_file.write(f"过滤后有效结果数: {len(valid_results)}\n")
-                            log_file.flush()
-                        else:
-                            log_file.write("警告: 过滤后没有有效结果，将回退到预设数据\n")
-                            log_file.flush()
-                            use_real_scraper = False
-                    else:
-                        log_file.write("警告: 爬取完成但没有结果，将回退到预设数据\n")
-                        log_file.flush()
-                        use_real_scraper = False
-                except Exception as e:
-                    log_file.write(f"错误: 真实爬取失败: {e}\n")
-                    import traceback
-                    error_trace = traceback.format_exc()
-                    log_file.write(f"错误详情:\n{error_trace}\n")
-                    log_file.write("将回退到预设数据\n")
-                    log_file.flush()
-                    
-                    print(f"真实爬取失败: {e}")
-                    import traceback
-                    print(f"详细错误: {traceback.format_exc()}")
-                    print("回退到预设数据")
-                    use_real_scraper = False
+            # 始终使用真实爬虫进行爬取
+            log_file.write(f"=== 强制使用真实爬虫进行爬取 ===\n")
+            log_file.flush()
+            print("=== 强制使用真实爬虫进行爬取 ===")
+            print(f"最大游戏数: {max_games}, 偏移量: {offset}, 延迟: {delay}秒")
             
-            # 如果不使用真实爬虫或爬取失败，使用预设数据
-            if not use_real_scraper:
-                log_file.write("=== 使用预设数据 ===\n")
+            try:
+                # 创建自定义爬虫实例
+                scraper = FastItchIoScraper(max_games=max_games, start_offset=offset, delay=delay)
+                
+                # 执行爬取
+                results, stats = scraper.scrape()
+                
+                # 更新状态并输出统计信息
+                log_file.write(f"爬取完成: 处理了 {stats['total_processed']} 个游戏，成功提取 {stats['successful_extractions']} 个iframe源\n")
+                log_file.write(f"耗时: {stats['elapsed_seconds']:.2f}秒\n")
                 log_file.flush()
-                print("=== 使用预设数据 ===")
-                # 使用预先收集的真实iframe数据
-                real_game_data = [
-                    {
-                        "title": "Polytrack",
-                        "url": "https://dddoooccc.itch.io/polytrack",
-                        "iframe_src": "https://itch.io/embed-upload/8357347?color=444444",
-                        "extracted_method": "real_preset_data"
-                    },
-                    {
-                        "title": "Mr. Magpie's Harmless Card Game",
-                        "url": "https://magpiecollective.itch.io/mr-magpies-harmless-card-game",
-                        "iframe_src": "https://itch.io/embed-upload/8410214?color=222222",
-                        "extracted_method": "real_preset_data"
-                    },
-                    {
-                        "title": "Narrow One",
-                        "url": "https://krajzeg.itch.io/narrow-one",
-                        "iframe_src": "https://itch.io/embed-upload/2034417?color=222336",
-                        "extracted_method": "real_preset_data"
-                    },
-                    {
-                        "title": "Unleashed",
-                        "url": "https://apoc.itch.io/unleashed",
-                        "iframe_src": "https://itch.io/embed-upload/1694088?color=333333",
-                        "extracted_method": "real_preset_data"
-                    },
-                    {
-                        "title": "GET YOKED: Extreme Bodybuilding",
-                        "url": "https://frenchbread.itch.io/get-yoked-2",
-                        "iframe_src": "https://itch.io/embed-upload/4507744?color=3a3a3a",
-                        "extracted_method": "real_preset_data"
-                    },
-                    {
-                        "title": "Friday Night Funkin'",
-                        "url": "https://ninja-muffin24.itch.io/funkin",
-                        "iframe_src": "https://itch.io/embed-upload/3671753?color=ffffff",
-                        "extracted_method": "real_preset_data"
-                    },
-                    {
-                        "title": "TRACE: Definitive Edition",
-                        "url": "https://pnkl.itch.io/trace-definitive-edition",
-                        "iframe_src": "https://itch.io/embed-upload/7519291?color=4d4d4d",
-                        "extracted_method": "real_preset_data"
-                    },
-                    {
-                        "title": "Cantata",
-                        "url": "https://afterthought-games.itch.io/cantata",
-                        "iframe_src": "https://itch.io/embed-upload/2358082?color=16303b",
-                        "extracted_method": "real_preset_data"
-                    },
-                    {
-                        "title": "Chasing Control",
-                        "url": "https://jn.itch.io/chasing-control",
-                        "iframe_src": "https://itch.io/embed-upload/7519291?color=2d2d2d",
-                        "extracted_method": "real_preset_data"
-                    },
-                    {
-                        "title": "Sort the Court!",
-                        "url": "https://graebor.itch.io/sort-the-court",
-                        "iframe_src": "https://itch.io/embed/42665?dark=true",
-                        "extracted_method": "real_preset_data"
-                    },
-                    {
-                        "title": "Before the Darkness",
-                        "url": "https://eumolpo.itch.io/before-the-darkness",
-                        "iframe_src": "https://itch.io/embed-upload/5337708?color=100001",
-                        "extracted_method": "real_preset_data"
-                    },
-                    {
-                        "title": "Space Shooter",
-                        "url": "https://maximilian-winter.itch.io/space-shooter",
-                        "iframe_src": "https://itch.io/embed-upload/7563568?color=000000",
-                        "extracted_method": "real_preset_data"
-                    },
-                    {
-                        "title": "Spellbreak Alpha",
-                        "url": "https://proletariat.itch.io/spellbreak",
-                        "iframe_src": "https://itch.io/embed/276014?border_width=0&amp;bg_color=000000&amp;fg_color=44D6A2&amp;link_color=44D6A2&amp;border_color=000000",
-                        "extracted_method": "real_preset_data"
-                    },
-                    {
-                        "title": "Wander Home",
-                        "url": "https://lambdadiode.itch.io/wander-home",
-                        "iframe_src": "https://itch.io/embed/1472578?bg_color=d6c7ae&amp;fg_color=222222&amp;link_color=1dabe8&amp;border_color=4d463d",
-                        "extracted_method": "real_preset_data"
-                    },
-                    {
-                        "title": "Shoot-Out!",
-                        "url": "https://cg-games.itch.io/shoot-out",
-                        "iframe_src": "https://itch.io/embed-upload/4023233?color=000000",
-                        "extracted_method": "real_preset_data"
+                
+                update_job(job_id, {
+                    'processed': stats['total_processed'],
+                    'successful': stats['successful_extractions']
+                })
+                
+                # 详细记录请求和响应
+                log_file.write("------ 网络请求详情 ------\n")
+                try:
+                    # 测试网络连接
+                    test_url = "https://itch.io/games/free/platform-web"
+                    headers = {
+                        'User-Agent': scraper.get_random_user_agent(),
+                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
                     }
-                ]
+                    req = urllib.request.Request(test_url, headers=headers)
+                    
+                    # 记录请求信息
+                    log_file.write(f"测试请求URL: {test_url}\n")
+                    log_file.write(f"请求头: {headers}\n")
+                    
+                    try:
+                        with urllib.request.urlopen(req, timeout=10) as response:
+                            log_file.write(f"响应状态码: {response.status}\n")
+                            log_file.write(f"响应头: {response.headers}\n")
+                            response_text = response.read().decode('utf-8')[:500]  # 只记录前500个字符
+                            log_file.write(f"响应内容摘要: {response_text}...(已截断)\n")
+                    except Exception as e:
+                        log_file.write(f"测试请求失败: {e}\n")
+                except Exception as e:
+                    log_file.write(f"网络测试发生错误: {e}\n")
                 
-                # 记录预设数据
-                log_file.write(f"使用预设数据，共 {len(real_game_data)} 条记录\n")
-                
-                # 根据请求的游戏数量返回相应数量的真实数据
-                max_games = min(max_games, len(real_game_data))
-                sample_results = real_game_data[:max_games]
-                
-                log_file.write(f"返回 {len(sample_results)} 条预设数据\n")
+                log_file.write("-------------------------\n")
                 log_file.flush()
+                
+                # 无论结果如何，都使用真实爬取的数据
+                if results:
+                    log_file.write(f"成功获取 {len(results)} 个结果\n")
+                    for i, result in enumerate(results):
+                        log_file.write(f"结果 {i+1}: {result.get('title')} - {result.get('iframe_src')}\n")
+                        
+                    # 确保每个结果都有iframe_src
+                    valid_results = []
+                    for result in results:
+                        if result.get('iframe_src'):
+                            valid_results.append(result)
+                            result['extracted_method'] = "real_scraper"  # 明确标记为实时爬取
+                        else:
+                            log_file.write(f"警告: 跳过没有iframe_src的结果: {result.get('title')}\n")
+                    
+                    if valid_results:
+                        log_file.write(f"有效结果数: {len(valid_results)}\n")
+                        sample_results = valid_results
+                    else:
+                        log_file.write("警告: 没有有效的iframe源结果\n")
+                        # 创建一个明确标记失败的结果
+                        sample_results = [{
+                            "title": "爬取失败 - 无有效结果",
+                            "url": "https://itch.io/games/free/platform-web",
+                            "iframe_src": "",
+                            "extracted_method": "real_scraper_failed",
+                            "error": "No valid iframe sources found"
+                        }]
+                else:
+                    log_file.write("警告: 爬取完成但没有结果\n")
+                    # 创建一个明确标记失败的结果
+                    sample_results = [{
+                        "title": "爬取失败 - 无结果",
+                        "url": "https://itch.io/games/free/platform-web",
+                        "iframe_src": "",
+                        "extracted_method": "real_scraper_failed",
+                        "error": "No results returned from scraper"
+                    }]
+            except Exception as e:
+                log_file.write(f"错误: 真实爬取失败: {e}\n")
+                import traceback
+                error_trace = traceback.format_exc()
+                log_file.write(f"错误详情:\n{error_trace}\n")
+                
+                print(f"真实爬取失败: {e}")
+                import traceback
+                print(f"详细错误: {traceback.format_exc()}")
+                
+                # 创建一个明确标记错误的结果
+                sample_results = [{
+                    "title": f"爬取失败 - {str(e)[:50]}",
+                    "url": "https://itch.io/games/free/platform-web",
+                    "iframe_src": "",
+                    "extracted_method": "real_scraper_error",
+                    "error": str(e)
+                }]
             
             # 添加元数据到结果中
             result_with_metadata = {
@@ -865,8 +873,11 @@ def mock_process_job(job_id, params):
                     "job_id": job_id,
                     "timestamp": datetime.now().isoformat(),
                     "params": params,
-                    "source": "real_scraper" if use_real_scraper else "preset_data",
-                    "count": len(sample_results)
+                    "source": "real_scraper",  # 即使失败也标记为真实爬取
+                    "count": len(sample_results),
+                    "vercel_env": 'VERCEL' in os.environ,
+                    "env_vars": {k: os.environ.get(k, 'not_set') for k in ['USE_REAL_SCRAPER', 'VERCEL', 'PYTHONUNBUFFERED']},
+                    "execution_time": stats['elapsed_seconds'] if 'stats' in locals() else 0
                 },
                 "results": sample_results
             }
@@ -887,10 +898,10 @@ def mock_process_job(job_id, params):
                 'completed_at': datetime.now().isoformat(),
                 'result_count': len(sample_results),
                 'result_file': result_file,
-                'processed': len(sample_results) if not use_real_scraper else stats['total_processed'],
-                'successful': len(sample_results) if not use_real_scraper else stats['successful_extractions'],
-                'found': len(sample_results) if not use_real_scraper else stats['total_processed'],
-                'source': "real_scraper" if use_real_scraper else "preset_data"
+                'processed': stats['total_processed'] if 'stats' in locals() else 0,
+                'successful': stats['successful_extractions'] if 'stats' in locals() else 0,
+                'found': stats['total_processed'] if 'stats' in locals() else 0,
+                'source': "real_scraper"  # 即使失败也标记为真实爬取
             })
     except Exception as e:
         print(f"Error in mock processing: {e}")
